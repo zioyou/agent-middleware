@@ -1,15 +1,13 @@
 # 오픈소스 LangGraph Platform
 
-<p align="center">
-  <strong>셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요.</strong>
-</p>
+셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요
+
+---
 
 LangGraph Platform을 자체 인프라로 대체하세요.  
 에이전트 오케스트레이션을 완전히 제어하고자 하는 개발자를 위해 FastAPI + PostgreSQL로 구축되었습니다.
 
 **Agent Protocol 준수**: Open LangGraph는 프로덕션 환경에서 LLM 에이전트를 제공하기 위한 오픈소스 표준인 [Agent Protocol](https://github.com/langchain-ai/agent-protocol) 사양을 구현합니다.
-
-**이런 분들께 추천합니다:** 벤더 종속에서 벗어나고자 하는 팀 • 데이터 주권 요구사항이 있는 경우 • 커스텀 배포가 필요한 경우 • 비용 최적화를 원하는 경우
 
 ## 왜 LangGraph Platform 대신 Open LangGraph인가?
 
