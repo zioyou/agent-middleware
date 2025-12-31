@@ -6,6 +6,7 @@ Wraps LangGraph graphs as A2A AgentExecutor.
 
 from typing import Any, Optional
 import logging
+import uuid
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -66,7 +67,9 @@ class LangGraphA2AExecutor(AgentExecutor):
             context: Request context with message, task_id, context_id
             event_queue: Queue for sending response events
         """
-        task_updater = TaskUpdater(event_queue, context.task_id)
+        # context_id is required by TaskUpdater (SDK 0.3.22)
+        context_id = context.context_id or context.task_id
+        task_updater = TaskUpdater(event_queue, context.task_id, context_id)
 
         try:
             # Convert A2A message → LangChain messages
@@ -113,6 +116,7 @@ class LangGraphA2AExecutor(AgentExecutor):
             logger.exception(f"Error executing graph {self.graph_id}: {e}")
             await task_updater.failed(
                 Message(
+                    message_id=str(uuid.uuid4()),
                     role="agent",
                     parts=[TextPart(kind="text", text=f"Error: {str(e)}")],
                 )
@@ -131,7 +135,9 @@ class LangGraphA2AExecutor(AgentExecutor):
             context: Request context
             event_queue: Queue for sending events
         """
-        task_updater = TaskUpdater(event_queue, context.task_id)
+        # context_id is required by TaskUpdater (SDK 0.3.22)
+        context_id = context.context_id or context.task_id
+        task_updater = TaskUpdater(event_queue, context.task_id, context_id)
 
         try:
             await task_updater.cancel()
@@ -186,6 +192,7 @@ class LangGraphA2AExecutor(AgentExecutor):
             await task_updater.update_status(
                 state=TaskState.input_required,
                 message=Message(
+                    message_id=str(uuid.uuid4()),
                     role="agent",
                     parts=[TextPart(kind="text", text=interrupt_msg)],
                 ),
@@ -201,6 +208,7 @@ class LangGraphA2AExecutor(AgentExecutor):
                 await task_updater.update_status(
                     state=TaskState.working,
                     message=Message(
+                        message_id=str(uuid.uuid4()),
                         role="agent",
                         parts=[TextPart(kind="text", text=delta)],
                     ),
