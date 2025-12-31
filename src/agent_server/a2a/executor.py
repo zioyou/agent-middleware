@@ -6,7 +6,6 @@ Wraps LangGraph graphs as A2A AgentExecutor.
 
 from typing import Any, Optional
 import logging
-import uuid
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -14,10 +13,10 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     TaskState,
-    Artifact,
-    Message,
+    Part,
     TextPart,
 )
+from a2a.utils import new_agent_text_message
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
@@ -92,6 +91,8 @@ class LangGraphA2AExecutor(AgentExecutor):
                     chunk,
                     task_updater,
                     accumulated_content,
+                    context_id,
+                    context.task_id,
                 )
 
                 accumulated_content = result.get("accumulated", accumulated_content)
@@ -102,23 +103,22 @@ class LangGraphA2AExecutor(AgentExecutor):
 
             # Complete - send final artifact
             if accumulated_content:
+                # Use Part(root=TextPart(...)) pattern per SDK convention
                 await task_updater.add_artifact(
-                    Artifact(
-                        artifact_id=f"{context.task_id}-response",
-                        name="response",
-                        parts=[TextPart(kind="text", text=accumulated_content)],
-                    )
+                    parts=[Part(root=TextPart(text=accumulated_content))],
+                    name="response",
                 )
 
             await task_updater.complete()
 
         except Exception as e:
             logger.exception(f"Error executing graph {self.graph_id}: {e}")
+            # Use SDK utility for proper message creation with auto-generated message_id
             await task_updater.failed(
-                Message(
-                    message_id=str(uuid.uuid4()),
-                    role="agent",
-                    parts=[TextPart(kind="text", text=f"Error: {str(e)}")],
+                new_agent_text_message(
+                    f"Error: {str(e)}",
+                    context_id,
+                    context.task_id,
                 )
             )
             raise
@@ -168,6 +168,8 @@ class LangGraphA2AExecutor(AgentExecutor):
         chunk: tuple,
         task_updater: TaskUpdater,
         accumulated: str,
+        context_id: str,
+        task_id: str,
     ) -> dict[str, Any]:
         """
         Process streaming chunk from LangGraph.
@@ -191,11 +193,7 @@ class LangGraphA2AExecutor(AgentExecutor):
 
             await task_updater.update_status(
                 state=TaskState.input_required,
-                message=Message(
-                    message_id=str(uuid.uuid4()),
-                    role="agent",
-                    parts=[TextPart(kind="text", text=interrupt_msg)],
-                ),
+                message=new_agent_text_message(interrupt_msg, context_id, task_id),
             )
             result["state"] = "input-required"
             return result
@@ -207,11 +205,7 @@ class LangGraphA2AExecutor(AgentExecutor):
             if delta:
                 await task_updater.update_status(
                     state=TaskState.working,
-                    message=Message(
-                        message_id=str(uuid.uuid4()),
-                        role="agent",
-                        parts=[TextPart(kind="text", text=delta)],
-                    ),
+                    message=new_agent_text_message(delta, context_id, task_id),
                 )
                 result["accumulated"] = accumulated + delta
 
