@@ -12,11 +12,15 @@ from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
-    TaskState,
+    InternalError,
+    InvalidParamsError,
     Part,
+    TaskState,
     TextPart,
+    UnsupportedOperationError,
 )
-from a2a.utils import new_agent_text_message
+from a2a.utils import new_agent_text_message, new_task
+from a2a.utils.errors import ServerError
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
@@ -66,9 +70,19 @@ class LangGraphA2AExecutor(AgentExecutor):
             context: Request context with message, task_id, context_id
             event_queue: Queue for sending response events
         """
-        # context_id is required by TaskUpdater (SDK 0.3.22)
-        context_id = context.context_id or context.task_id
-        task_updater = TaskUpdater(event_queue, context.task_id, context_id)
+        # Validate request (hook for subclasses)
+        if self._validate_request(context):
+            raise ServerError(error=InvalidParamsError())
+
+        # Handle task creation per official A2A pattern
+        # If no current_task, create one and enqueue it
+        task = context.current_task
+        if not task:
+            task = new_task(context.message)  # type: ignore[arg-type]
+            await event_queue.enqueue_event(task)
+
+        # Create task updater with task's own IDs
+        task_updater = TaskUpdater(event_queue, task.id, task.context_id)
 
         try:
             # Convert A2A message → LangChain messages
@@ -91,8 +105,8 @@ class LangGraphA2AExecutor(AgentExecutor):
                     chunk,
                     task_updater,
                     accumulated_content,
-                    context_id,
-                    context.task_id,
+                    task.context_id,
+                    task.id,
                 )
 
                 accumulated_content = result.get("accumulated", accumulated_content)
@@ -113,15 +127,8 @@ class LangGraphA2AExecutor(AgentExecutor):
 
         except Exception as e:
             logger.exception(f"Error executing graph {self.graph_id}: {e}")
-            # Use SDK utility for proper message creation with auto-generated message_id
-            await task_updater.failed(
-                new_agent_text_message(
-                    f"Error: {str(e)}",
-                    context_id,
-                    context.task_id,
-                )
-            )
-            raise
+            # Raise ServerError with typed error per A2A protocol
+            raise ServerError(error=InternalError()) from e
 
     async def cancel(
         self,
@@ -145,6 +152,20 @@ class LangGraphA2AExecutor(AgentExecutor):
         except Exception as e:
             logger.exception(f"Error canceling task: {e}")
             raise
+
+    def _validate_request(self, context: RequestContext) -> bool:
+        """
+        Validate incoming request.
+
+        Override in subclasses for custom validation.
+
+        Args:
+            context: Request context to validate
+
+        Returns:
+            True if validation fails (request is invalid), False if valid
+        """
+        return False
 
     def _build_config(self, context: RequestContext) -> dict[str, Any]:
         """
@@ -194,6 +215,7 @@ class LangGraphA2AExecutor(AgentExecutor):
             await task_updater.update_status(
                 state=TaskState.input_required,
                 message=new_agent_text_message(interrupt_msg, context_id, task_id),
+                final=True,  # Mark as terminal state per A2A protocol
             )
             result["state"] = "input-required"
             return result
