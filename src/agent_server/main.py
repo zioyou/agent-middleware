@@ -15,7 +15,8 @@ LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준
    ├─ /assistants: 어시스턴트(그래프) 관리
    ├─ /threads: 대화 스레드 관리
    ├─ /runs: 에이전트 실행 및 스트리밍
-   └─ /store: LangGraph Store 장기 메모리
+   ├─ /store: LangGraph Store 장기 메모리
+   └─ /a2a: A2A (Agent-to-Agent) Protocol 통신
 
 3. 라이프사이클 관리:
    ├─ Startup: 데이터베이스, LangGraph 서비스, 이벤트 저장소 초기화
@@ -68,6 +69,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.authentication import AuthenticationMiddleware
 
+from .a2a.router import router as a2a_router
 from .api.assistants import router as assistants_router
 from .api.runs import router as runs_router
 from .api.store import router as store_router
@@ -235,6 +237,10 @@ app.include_router(runs_router, prefix="", tags=["Runs"])
 # /store - LangGraph Store를 통한 장기 메모리 관리
 # 사용자별, 스레드별 영구 데이터 저장소 (JSONB)
 app.include_router(store_router, prefix="", tags=["Store"])
+
+# /a2a - A2A (Agent-to-Agent) Protocol endpoints
+# 외부 A2A 클라이언트와의 에이전트 간 통신 지원
+app.include_router(a2a_router)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
