@@ -163,15 +163,19 @@ async def handle_a2a_post(graph_id: str, request: Request) -> Response:
     """
     Handle A2A JSON-RPC POST requests.
 
+    Note: We use _handle_requests because A2A SDK is designed for standalone servers
+    (server.build() → uvicorn.run), not for integration into existing FastAPI apps
+    with dynamic {graph_id} routing. The SDK's public APIs (on_message_send, etc.)
+    require manual JSON-RPC parsing which _handle_requests handles internally.
+
     Args:
         graph_id: Graph identifier
         request: FastAPI request
 
     Returns:
-        A2A response
+        A2A JSON-RPC response
     """
     app = await get_or_create_a2a_app(graph_id)
-    # Call the SDK's request handler directly
     return await app._handle_requests(request)
 
 
