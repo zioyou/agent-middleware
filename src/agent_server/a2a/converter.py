@@ -4,9 +4,13 @@ A2A Message Converter
 Converts between A2A Protocol messages and LangChain messages.
 """
 
+import logging
+import uuid
 from typing import Any, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+
+logger = logging.getLogger(__name__)
 
 
 class A2AMessageConverter:
@@ -76,12 +80,12 @@ class A2AMessageConverter:
 
         content = self.parts_to_langchain_content(parts)
 
-        # Extract data parts to additional_kwargs
+        # Collect ALL data parts (not just first)
         additional_kwargs: dict[str, Any] = {}
-        for part in parts:
-            if part.get("kind") == "data":
-                additional_kwargs["a2a_data"] = part.get("data", {})
-                break
+        data_parts = [p.get("data", {}) for p in parts if p.get("kind") == "data"]
+        if data_parts:
+            # Store single value or list depending on count
+            additional_kwargs["a2a_data"] = data_parts[0] if len(data_parts) == 1 else data_parts
 
         if role == "agent":
             return AIMessage(content=content, additional_kwargs=additional_kwargs)
@@ -136,10 +140,20 @@ class A2AMessageConverter:
                             },
                         }
                     )
+                else:
+                    # Unknown type - preserve as text with warning
+                    logger.warning(f"Unknown content block type: {block_type}, converting to text")
+                    parts.append({
+                        "kind": "text",
+                        "text": f"[Unsupported content: {block_type}]"
+                    })
 
         # Add data part if present
         a2a_data = message.additional_kwargs.get("a2a_data")
         if a2a_data:
             parts.append({"kind": "data", "data": a2a_data})
 
-        return {"role": role, "parts": parts}
+        # Generate message_id (use LangChain message id if available)
+        message_id = getattr(message, "id", None) or str(uuid.uuid4())
+
+        return {"message_id": message_id, "role": role, "parts": parts}

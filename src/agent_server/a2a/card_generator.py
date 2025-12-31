@@ -84,7 +84,7 @@ class AgentCardGenerator:
             description=description,
             url=f"{self.base_url}/a2a/{graph_id}",
             version=self._generate_version(graph, graph_id),
-            protocol_version="0.3",
+            protocol_version="0.3.0",
             capabilities=AgentCapabilities(
                 streaming=True,
                 push_notifications=False,

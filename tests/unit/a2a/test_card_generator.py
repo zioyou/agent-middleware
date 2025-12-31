@@ -88,4 +88,4 @@ class TestAgentCardGenerator:
 
         card = self.generator.generate_for_graph("test", compiled)
 
-        assert card.protocol_version == "0.3"
+        assert card.protocol_version == "0.3.0"
