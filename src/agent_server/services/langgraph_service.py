@@ -356,6 +356,16 @@ class LangGraphService:
         """
         return {graph_id: info["file_path"] for graph_id, info in self._graph_registry.items()}
 
+    def get_graph_ids(self) -> list[str]:
+        """Get list of all registered graph IDs.
+
+        Used by A2A router to list available agents.
+
+        Returns:
+            list[str]: List of graph identifiers
+        """
+        return list(self._graph_registry.keys())
+
     def invalidate_cache(self, graph_id: str | None = None) -> None:
         """그래프 캐시 무효화 (핫 리로드용)
 

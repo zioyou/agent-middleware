@@ -4,8 +4,8 @@ LangGraph A2A Executor
 Wraps LangGraph graphs as A2A AgentExecutor.
 """
 
-from typing import Any, Optional
 import logging
+from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.agent_execution.context import RequestContext
@@ -17,11 +17,9 @@ from a2a.types import (
     Part,
     TaskState,
     TextPart,
-    UnsupportedOperationError,
 )
 from a2a.utils import new_agent_text_message, new_task
 from a2a.utils.errors import ServerError
-
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from .converter import A2AMessageConverter
@@ -44,7 +42,7 @@ class LangGraphA2AExecutor(AgentExecutor):
         self,
         graph: Any,
         graph_id: str,
-        converter: Optional[A2AMessageConverter] = None,
+        converter: A2AMessageConverter | None = None,
     ):
         """
         Initialize executor.
@@ -153,7 +151,7 @@ class LangGraphA2AExecutor(AgentExecutor):
             logger.exception(f"Error canceling task: {e}")
             raise
 
-    def _validate_request(self, context: RequestContext) -> bool:
+    def _validate_request(self, context: RequestContext) -> bool:  # noqa: ARG002
         """
         Validate incoming request.
 

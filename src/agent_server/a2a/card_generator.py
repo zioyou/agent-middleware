@@ -7,7 +7,7 @@ Generates A2A Agent Cards from LangGraph graphs.
 import hashlib
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from a2a.types import (
     AgentCapabilities,
@@ -158,7 +158,7 @@ class AgentCardGenerator:
 
         return meta
 
-    def _extract_skills_from_tools(self, graph: Any) -> Optional[list[dict]]:
+    def _extract_skills_from_tools(self, graph: Any) -> list[dict] | None:
         """Extract skills from graph tools"""
         try:
             tools = getattr(graph, "tools", None)
@@ -182,7 +182,7 @@ class AgentCardGenerator:
 
     def _build_skills(
         self,
-        skills_data: Optional[list[dict]],
+        skills_data: list[dict] | None,
     ) -> list[AgentSkill]:
         """Build AgentSkill objects from skill data"""
         if not skills_data:

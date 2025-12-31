@@ -35,7 +35,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "uvicorn>=0.35.0",
     "langfuse>=3.3.4",
-    "a2a-sdk>=0.3.22",
+    "a2a-sdk[http-server]>=0.3.22",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -3,18 +3,18 @@ A2A Protocol Type Definitions
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 
 @dataclass
 class A2AGraphMetadata:
     """Metadata for A2A-enabled graphs"""
 
-    name: Optional[str] = None
-    description: Optional[str] = None
-    skills: Optional[list[dict[str, Any]]] = None
-    icon_url: Optional[str] = None
-    documentation_url: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    skills: list[dict[str, Any]] | None = None
+    icon_url: str | None = None
+    documentation_url: str | None = None
 
 
 class A2AConfig(TypedDict, total=False):

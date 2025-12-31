@@ -4,16 +4,17 @@ A2A Metadata Decorators
 Decorators for attaching A2A metadata to LangGraph graphs.
 """
 
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 
 
 def a2a_metadata(
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    skills: Optional[list[dict[str, Any]]] = None,
-    icon_url: Optional[str] = None,
-    documentation_url: Optional[str] = None,
+    name: str | None = None,
+    description: str | None = None,
+    skills: list[dict[str, Any]] | None = None,
+    icon_url: str | None = None,
+    documentation_url: str | None = None,
 ) -> Callable:
     """
     Decorator to attach A2A metadata to a graph factory function.
@@ -62,11 +63,11 @@ def a2a_metadata(
 
 def attach_a2a_metadata(
     graph: Any,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    skills: Optional[list[dict[str, Any]]] = None,
-    icon_url: Optional[str] = None,
-    documentation_url: Optional[str] = None,
+    name: str | None = None,
+    description: str | None = None,
+    skills: list[dict[str, Any]] | None = None,
+    icon_url: str | None = None,
+    documentation_url: str | None = None,
 ) -> Any:
     """
     Attach A2A metadata to an existing graph.

@@ -4,20 +4,18 @@ A2A Protocol Router
 Provides A2A endpoints for LangGraph agents.
 """
 
-from typing import Optional
 import logging
-
-from fastapi import APIRouter, Request, Response, HTTPException
-from fastapi.responses import JSONResponse
 
 from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
-from .executor import LangGraphA2AExecutor
 from .card_generator import AgentCardGenerator
-from .detector import is_a2a_compatible
 from .converter import A2AMessageConverter
+from .detector import is_a2a_compatible
+from .executor import LangGraphA2AExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +178,7 @@ async def handle_a2a_post(graph_id: str, request: Request) -> Response:
 
 
 @router.get("/{graph_id}")
-async def handle_a2a_get(graph_id: str, request: Request) -> Response:
+async def handle_a2a_get(graph_id: str, request: Request) -> Response:  # noqa: ARG001
     """
     Handle A2A GET requests (e.g., task subscriptions via SSE).
 
