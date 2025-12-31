@@ -141,20 +141,21 @@ async def list_a2a_agents() -> dict:
 
 
 @router.get("/{graph_id}/.well-known/agent-card.json")
-async def get_agent_card(graph_id: str, request: Request) -> Response:
+async def get_agent_card(graph_id: str) -> dict:
     """
     Get Agent Card for discovery.
 
     Args:
         graph_id: Graph identifier
-        request: FastAPI request
 
     Returns:
-        Agent Card as JSON
+        Agent Card as JSON (a2a.types.AgentCard Pydantic model)
     """
     app = await get_or_create_a2a_app(graph_id)
-    # Call the SDK's agent card handler directly
-    return await app._handle_get_agent_card(request)
+    # Use Pydantic's model_dump() for proper serialization
+    # by_alias=True ensures field names match A2A protocol spec
+    # exclude_none=True omits optional fields that aren't set
+    return app.agent_card.model_dump(by_alias=True, exclude_none=True)
 
 
 @router.post("/{graph_id}")
