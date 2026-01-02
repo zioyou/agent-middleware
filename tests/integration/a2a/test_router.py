@@ -1,11 +1,16 @@
-"""Integration tests for A2A router"""
+"""Integration tests for A2A router
+
+Uses REAL LangGraphService with empty/minimal configuration - no mocking.
+"""
+
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import MagicMock, patch
-from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
-from src.agent_server.a2a.router import router as a2a_router, _a2a_apps
+from src.agent_server.a2a.router import _a2a_apps
+from src.agent_server.a2a.router import router as a2a_router
 
 
 @pytest.fixture
@@ -33,12 +38,17 @@ def clear_app_cache():
 
 
 @pytest.fixture
-def mock_langgraph_service():
-    """Mock LangGraph service for testing"""
-    mock_service = MagicMock()
-    mock_service.get_graph_ids.return_value = []
-    mock_service.get_graph.return_value = None
-    return mock_service
+def empty_langgraph_service():
+    """Create REAL LangGraphService with no graphs registered.
+
+    Uses actual service - no mocking of methods.
+    """
+    from src.agent_server.services.langgraph_service import LangGraphService
+
+    # Create real service with empty registry
+    service = LangGraphService()
+    # Don't add any graphs - registry stays empty
+    return service
 
 
 class TestAgentListEndpoint:
@@ -55,11 +65,11 @@ class TestAgentListEndpoint:
         assert "count" in data
 
     @pytest.mark.asyncio
-    async def test_list_agents_with_mock_service(self, client, mock_langgraph_service):
-        """List agents with mocked service"""
+    async def test_list_agents_with_empty_service(self, client, empty_langgraph_service):
+        """List agents with real service that has no graphs"""
         with patch(
             "src.agent_server.a2a.router._get_langgraph_service",
-            return_value=mock_langgraph_service
+            return_value=empty_langgraph_service,
         ):
             response = await client.get("/a2a/")
 
@@ -73,11 +83,11 @@ class TestAgentCardEndpoint:
     """Test /.well-known/agent-card.json endpoint"""
 
     @pytest.mark.asyncio
-    async def test_nonexistent_graph_404(self, client, mock_langgraph_service):
+    async def test_nonexistent_graph_404(self, client, empty_langgraph_service):
         """Nonexistent graph should return 404"""
         with patch(
             "src.agent_server.a2a.router._get_langgraph_service",
-            return_value=mock_langgraph_service
+            return_value=empty_langgraph_service,
         ):
             response = await client.get("/a2a/nonexistent/.well-known/agent-card.json")
 
@@ -88,7 +98,7 @@ class TestAgentCardEndpoint:
         """When service is unavailable, return 500"""
         with patch(
             "src.agent_server.a2a.router._get_langgraph_service",
-            return_value=None
+            return_value=None,
         ):
             response = await client.get("/a2a/nonexistent/.well-known/agent-card.json")
 

@@ -76,7 +76,13 @@ class LangGraphA2AExecutor(AgentExecutor):
         # If no current_task, create one and enqueue it
         task = context.current_task
         if not task:
-            task = new_task(context.message)  # type: ignore[arg-type]
+            # Ensure message has context_id from request params for conversation threading
+            message = context.message
+            if context.context_id and (not message.context_id or message.context_id != context.context_id):
+                # Copy message with context_id from request params
+                message = message.model_copy(update={"context_id": context.context_id})
+
+            task = new_task(message)  # type: ignore[arg-type]
             await event_queue.enqueue_event(task)
 
         # Create task updater with task's own IDs

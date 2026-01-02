@@ -307,3 +307,51 @@ class ThreadHistoryRequest(BaseModel):
     )
     subgraphs: bool | None = Field(False, description="서브그래프 상태 포함 여부 (기본: False)")
     checkpoint_ns: str | None = Field(None, description="체크포인트 네임스페이스 (특정 네임스페이스만 조회)")
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: Thread Copy 모델
+# ---------------------------------------------------------------------------
+
+
+class ThreadCopyRequest(BaseModel):
+    """스레드 복사 요청 모델 (Agent Protocol v0.2.0)
+
+    기존 스레드의 상태를 복사하여 새 스레드를 생성할 때 사용합니다.
+    POST /threads/{thread_id}/copy 엔드포인트에서 사용됩니다.
+
+    주요 기능:
+    - 특정 체크포인트에서 복사하여 브랜칭 가능
+    - 새 스레드에 다른 메타데이터 설정 가능
+    - 원본 스레드는 변경되지 않음
+
+    필드 설명:
+        checkpoint_id: 복사할 체크포인트 ID (선택)
+            - None이면 최신 상태에서 복사
+            - 특정 체크포인트 지정 시 해당 시점에서 브랜칭
+        metadata: 새 스레드의 메타데이터 (선택)
+            - None이면 원본 스레드의 메타데이터 복사
+            - 제공되면 새 메타데이터로 덮어씀
+
+    사용 예:
+        # 최신 상태에서 복사 (브랜칭)
+        request = ThreadCopyRequest()
+
+        # 특정 체크포인트에서 복사
+        request = ThreadCopyRequest(
+            checkpoint_id="abc123",
+            metadata={"branch": "experiment_1"}
+        )
+
+    참고:
+        - 복사된 스레드는 새로운 thread_id를 가짐
+        - 원본 스레드의 이후 변경은 복사본에 영향 없음
+        - HITL 워크플로우에서 "what-if" 시나리오 테스트에 유용
+    """
+
+    checkpoint_id: str | None = Field(
+        None, description="복사할 체크포인트 ID (None이면 최신 상태에서 복사)"
+    )
+    metadata: dict[str, Any] | None = Field(
+        None, description="새 스레드의 메타데이터 (None이면 원본 메타데이터 복사)"
+    )

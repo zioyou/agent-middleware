@@ -4,12 +4,12 @@ These tests verify the A2A protocol flow using the A2A SDK's client classes.
 Uses FakeListChatModel for LLM mocking - no API keys required.
 """
 
-import pytest
-import httpx
 from uuid import uuid4
 
+import httpx
+import pytest
 from a2a.client import A2ACardResolver
-from a2a.types import Message, Part, TextPart, Role
+from a2a.types import Message, Part, Role, TextPart
 
 
 class TestA2AClientCardDiscovery:
@@ -43,49 +43,51 @@ class TestA2AClientCardDiscovery:
             base_url="http://test/a2a/nonexistent",
         )
 
-        with pytest.raises(Exception):
+        from a2a.client.errors import A2AClientHTTPError
+
+        with pytest.raises(A2AClientHTTPError):
             await resolver.get_agent_card()
 
 
-class TestA2AClientLegacy:
-    """Test A2A protocol using legacy A2AClient (deprecated but still works)"""
+class TestA2AClientFactory:
+    """Test A2A protocol using ClientFactory (recommended pattern)"""
 
     @pytest.mark.asyncio
-    async def test_send_message_request(self, a2a_test_client: httpx.AsyncClient):
-        """Test sending message using A2AClient"""
-        from a2a.client import A2AClient
-        from a2a.types import SendMessageRequest, MessageSendParams
+    async def test_send_message_with_client_factory(self, a2a_test_client: httpx.AsyncClient):
+        """Test sending message using ClientFactory (replaces deprecated A2AClient)"""
+        from a2a.client import ClientConfig, ClientFactory
 
-        client = A2AClient(
+        # Step 1: Get agent card
+        resolver = A2ACardResolver(
             httpx_client=a2a_test_client,
-            url="http://test/a2a/fake_agent",
+            base_url="http://test/a2a/fake_agent",
         )
+        card = await resolver.get_agent_card()
 
-        # Create message
+        # Step 2: Create client using factory pattern
+        config = ClientConfig(httpx_client=a2a_test_client)
+        factory = ClientFactory(config)
+        client = factory.create(card)
+
+        # Step 3: Send message
         message = Message(
             role=Role.user,
             parts=[Part(root=TextPart(text="Hello, agent!"))],
             message_id=str(uuid4()),
         )
 
-        # Create request
-        request = SendMessageRequest(
-            id=str(uuid4()),
-            params=MessageSendParams(message=message),
-        )
+        # send_message returns an async iterator, consume it to get response
+        async for event in client.send_message(message):
+            # First event should be the task/response
+            response = event
+            break  # Just need the first event for this test
 
-        # Send message
-        response = await client.send_message(request)
-
-        # Verify response
+        # Verify we got a response
         assert response is not None
-        # Response could be a Task or error depending on implementation
 
     @pytest.mark.asyncio
     async def test_get_agent_card_via_resolver(self, a2a_test_client: httpx.AsyncClient):
-        """Test getting agent card via A2ACardResolver (A2AClient is deprecated)"""
-        from a2a.client import A2ACardResolver
-
+        """Test getting agent card via A2ACardResolver"""
         resolver = A2ACardResolver(
             httpx_client=a2a_test_client,
             base_url="http://test/a2a/fake_agent",
@@ -102,15 +104,22 @@ class TestA2AClientMessageParts:
 
     @pytest.mark.asyncio
     async def test_text_part_message(self, a2a_test_client: httpx.AsyncClient):
-        """Test sending message with text part"""
-        from a2a.client import A2AClient
-        from a2a.types import SendMessageRequest, MessageSendParams
+        """Test sending message with multiple text parts"""
+        from a2a.client import ClientConfig, ClientFactory
 
-        client = A2AClient(
+        # Get agent card first
+        resolver = A2ACardResolver(
             httpx_client=a2a_test_client,
-            url="http://test/a2a/fake_agent",
+            base_url="http://test/a2a/fake_agent",
         )
+        card = await resolver.get_agent_card()
 
+        # Create client using factory pattern
+        config = ClientConfig(httpx_client=a2a_test_client)
+        factory = ClientFactory(config)
+        client = factory.create(card)
+
+        # Create message with multiple parts
         message = Message(
             role=Role.user,
             parts=[
@@ -120,12 +129,11 @@ class TestA2AClientMessageParts:
             message_id=str(uuid4()),
         )
 
-        request = SendMessageRequest(
-            id=str(uuid4()),
-            params=MessageSendParams(message=message),
-        )
+        # send_message returns an async iterator
+        async for event in client.send_message(message):
+            response = event
+            break  # Just need the first event
 
-        response = await client.send_message(request)
         assert response is not None
 
 

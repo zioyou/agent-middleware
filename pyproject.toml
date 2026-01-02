@@ -3,12 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "open-langgraph"
+name = "open-langgraph-platform"
 version = "0.1.0"
-description = "Open LangGraph - Self-hosted AI agent backend with FastAPI and PostgreSQL. Zero vendor lock-in, full control over your agent infrastructure."
+description = "Open LangGraph Platform - Self-hosted AI agent backend with FastAPI and PostgreSQL. Zero vendor lock-in, full control over your agent infrastructure."
 readme = "README.md"
 requires-python = ">=3.11"
-keywords = ["langgraph", "ai-agents", "self-hosted", "agent-backend", "fastapi", "postgresql", "langchain", "agent-protocol"]
+keywords = [
+    "langgraph",
+    "ai-agents",
+    "self-hosted",
+    "agent-backend",
+    "fastapi",
+    "postgresql",
+    "langchain",
+    "agent-protocol",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -50,18 +59,18 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",     # pycodestyle errors
-    "W",     # pycodestyle warnings
-    "F",     # pyflakes
-    "I",     # isort
-    "B",     # flake8-bugbear
-    "C4",    # flake8-comprehensions
-    "UP",    # pyupgrade
-    "ARG",   # flake8-unused-arguments
-    "SIM",   # flake8-simplify
-    "TCH",   # flake8-type-checking
-    "PTH",   # flake8-use-pathlib
-    "ERA",   # eradicate (commented-out code)
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate (commented-out code)
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
@@ -74,11 +83,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
-    "ARG",   # unused arguments in tests are common
-    "S101",  # assert statements are expected in tests
+    "ARG",  # unused arguments in tests are common
+    "S101", # assert statements are expected in tests
 ]
 "alembic/**/*.py" = [
-    "ERA",   # commented code in migrations is intentional
+    "ERA", # commented code in migrations is intentional
 ]
 
 [tool.ruff.format]
@@ -102,6 +111,10 @@ addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [
     "e2e: marks tests as end-to-end tests",
+    "db: marks tests that require PostgreSQL database",
+    "hitl: marks tests for Human-in-the-Loop functionality",
+    "real_graph: marks tests using real LangGraph graphs with fake LLM",
+    "integration: marks tests as integration tests",
 ]
 
 [tool.bandit]

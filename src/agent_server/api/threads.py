@@ -62,6 +62,7 @@ from ..core.orm import get_session
 from ..models import (
     Thread,
     ThreadCheckpointPostRequest,
+    ThreadCopyRequest,
     ThreadCreate,
     ThreadHistoryRequest,
     ThreadList,
@@ -798,3 +799,163 @@ async def search_threads(
 
     # 클라이언트/벤더 호환성을 위해 스레드 배열 반환
     return threads_models
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: Thread Copy 엔드포인트
+# ---------------------------------------------------------------------------
+
+
+@router.post("/threads/{thread_id}/copy", response_model=Thread)
+async def copy_thread(
+    thread_id: str,
+    request: ThreadCopyRequest | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Thread:
+    """스레드 복사 (Agent Protocol v0.2.0)
+
+    기존 스레드의 상태를 복사하여 새 스레드를 생성합니다.
+    특정 체크포인트에서 브랜칭하거나 현재 상태를 복제할 수 있습니다.
+
+    주요 사용 사례:
+    - 대화 브랜칭: "what-if" 시나리오 테스트
+    - 상태 백업: 중요 시점의 대화 상태 보존
+    - A/B 테스트: 동일 시작점에서 다른 경로 탐색
+
+    동작 흐름:
+    1. 소스 스레드 존재 및 소유권 확인
+    2. 지정된 체크포인트 또는 최신 상태 로드
+    3. 새 스레드 생성 (새 thread_id)
+    4. LangGraph 체크포인터에 상태 복사
+    5. 새 스레드 반환
+
+    Args:
+        thread_id (str): 복사할 소스 스레드 ID
+        request (ThreadCopyRequest | None): 복사 옵션
+            - checkpoint_id: 복사할 체크포인트 ID (None이면 최신)
+            - metadata: 새 스레드의 메타데이터 (None이면 원본 복사)
+        user (User): 인증된 사용자
+        session (AsyncSession): 데이터베이스 세션
+
+    Returns:
+        Thread: 생성된 새 스레드 (복사된 상태 포함)
+
+    Raises:
+        HTTPException(404): 소스 스레드를 찾을 수 없음
+        HTTPException(404): 지정된 체크포인트를 찾을 수 없음
+        HTTPException(500): 상태 복사 실패
+
+    사용 예:
+        # 최신 상태에서 복사
+        POST /threads/thread_123/copy
+        {}
+
+        # 특정 체크포인트에서 브랜칭
+        POST /threads/thread_123/copy
+        {
+            "checkpoint_id": "cp_abc123",
+            "metadata": {"branch": "experiment_1"}
+        }
+
+    참고:
+        - 원본 스레드는 변경되지 않음
+        - 복사된 스레드는 독립적으로 동작
+        - HITL 워크플로우에서 브랜칭에 유용
+    """
+    # 1. 소스 스레드 조회
+    source_thread = await session.scalar(
+        select(ThreadORM).where(
+            ThreadORM.thread_id == thread_id,
+            ThreadORM.user_id == user.identity,
+        )
+    )
+    if not source_thread:
+        raise HTTPException(404, f"Thread '{thread_id}' not found")
+
+    # 2. 복사 옵션 파싱
+    checkpoint_id = request.checkpoint_id if request else None
+    new_metadata = request.metadata if request else None
+
+    # 3. 소스 스레드 상태 로드
+    try:
+        from ..core.database import db_manager
+
+        checkpointer = await db_manager.get_checkpointer()
+
+        # 체크포인트 조회
+        config: RunnableConfig = {
+            "configurable": {
+                "thread_id": thread_id,
+            }
+        }
+        if checkpoint_id:
+            config["configurable"]["checkpoint_id"] = checkpoint_id
+
+        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        if not checkpoint_tuple:
+            if checkpoint_id:
+                raise HTTPException(404, f"Checkpoint '{checkpoint_id}' not found")
+            # 체크포인트가 없으면 빈 상태로 복사
+            source_state = None
+        else:
+            source_state = checkpoint_tuple.checkpoint
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to load source thread state: {e}")
+        raise HTTPException(500, f"Failed to load source thread state: {str(e)}") from e
+
+    # 4. 새 스레드 생성
+    new_thread_id = str(uuid4())
+    now = datetime.now(UTC)
+
+    # 메타데이터 결정: 새 메타데이터가 제공되면 사용, 아니면 원본 복사
+    final_metadata = new_metadata if new_metadata is not None else dict(source_thread.metadata_json or {})
+    # 복사 출처 정보 추가
+    final_metadata["copied_from"] = thread_id
+    if checkpoint_id:
+        final_metadata["copied_from_checkpoint"] = checkpoint_id
+
+    new_thread = ThreadORM(
+        thread_id=new_thread_id,
+        status="idle",
+        metadata_json=final_metadata,
+        user_id=user.identity,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(new_thread)
+    await session.commit()
+
+    # 5. 상태 복사 (체크포인트가 있는 경우)
+    if source_state:
+        try:
+            new_config: RunnableConfig = {
+                "configurable": {
+                    "thread_id": new_thread_id,
+                }
+            }
+            # 새 스레드에 상태 저장
+            await checkpointer.aput(
+                new_config,
+                source_state,
+                {"source": "copy", "copied_from": thread_id},
+                {},  # new_versions
+            )
+        except Exception as e:
+            # 상태 복사 실패 시 생성된 스레드 삭제
+            await session.delete(new_thread)
+            await session.commit()
+            logger.error(f"Failed to copy thread state: {e}")
+            raise HTTPException(500, f"Failed to copy thread state: {str(e)}") from e
+
+    logger.info(f"Copied thread {thread_id} to {new_thread_id} (checkpoint: {checkpoint_id or 'latest'})")
+
+    return Thread.model_validate(
+        {
+            **{c.name: getattr(new_thread, c.name) for c in new_thread.__table__.columns},
+            "metadata": new_thread.metadata_json,
+        }
+    )

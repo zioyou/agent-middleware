@@ -177,3 +177,69 @@ class StoreDeleteRequest(BaseModel):
 
     namespace: list[str]  # 삭제할 항목의 네임스페이스
     key: str  # 삭제할 항목의 키
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: 네임스페이스 관련 모델
+# ---------------------------------------------------------------------------
+
+
+class StoreNamespaceRequest(BaseModel):
+    """저장소 네임스페이스 조회 요청 모델 (Agent Protocol v0.2.0)
+
+    저장소에 존재하는 네임스페이스 목록을 조회할 때 사용합니다.
+    POST /store/namespaces 엔드포인트에서 사용됩니다.
+
+    필드 설명:
+        prefix: 네임스페이스 접두사 필터 (선택)
+            - 제공되면 해당 접두사로 시작하는 네임스페이스만 반환
+            - None이면 모든 네임스페이스 반환
+        limit: 최대 반환 개수 (1~1000, 기본값: 100)
+        offset: 시작 위치 (페이지네이션)
+
+    사용 예:
+        # 특정 사용자의 네임스페이스 조회
+        request = StoreNamespaceRequest(
+            prefix=["user", "123"],
+            limit=50
+        )
+
+        # 모든 네임스페이스 조회
+        request = StoreNamespaceRequest()
+
+    참고:
+        - 네임스페이스는 계층적 경로 (예: ["user", "123", "settings"])
+        - 사용자별 격리가 필요한 경우 인증 미들웨어에서 prefix 필터 적용
+    """
+
+    prefix: list[str] | None = Field(
+        None, description="네임스페이스 접두사 필터 (해당 접두사로 시작하는 네임스페이스만 조회)"
+    )
+    limit: int = Field(100, ge=1, le=1000, description="최대 반환 개수 (1~1000, 기본값: 100)")
+    offset: int = Field(0, ge=0, description="시작 위치 (페이지네이션)")
+
+
+class StoreNamespaceResponse(BaseModel):
+    """저장소 네임스페이스 조회 응답 모델 (Agent Protocol v0.2.0)
+
+    네임스페이스 목록 조회 결과를 반환합니다.
+
+    필드 설명:
+        namespaces: 네임스페이스 목록
+            - 각 네임스페이스는 문자열 리스트로 표현
+            - 예: [["user", "123"], ["user", "456"], ["system"]]
+        total: 전체 네임스페이스 개수 (페이지네이션 전)
+
+    사용 예:
+        response = StoreNamespaceResponse(
+            namespaces=[
+                ["user", "123", "settings"],
+                ["user", "123", "preferences"],
+                ["user", "456", "settings"]
+            ],
+            total=3
+        )
+    """
+
+    namespaces: list[list[str]] = Field(..., description="네임스페이스 목록 (각 요소는 경로 세그먼트 리스트)")
+    total: int = Field(..., description="전체 네임스페이스 개수 (페이지네이션 전)")

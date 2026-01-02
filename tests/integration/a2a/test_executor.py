@@ -1,14 +1,15 @@
 """Integration tests for LangGraph A2A Executor"""
 
+from typing import Annotated, TypedDict
+from unittest.mock import MagicMock
+
 import pytest
-from typing import TypedDict, Annotated
-from unittest.mock import AsyncMock, MagicMock
+from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 
-from src.agent_server.a2a.executor import LangGraphA2AExecutor
 from src.agent_server.a2a.converter import A2AMessageConverter
+from src.agent_server.a2a.executor import LangGraphA2AExecutor
 
 
 class State(TypedDict):

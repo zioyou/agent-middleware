@@ -291,3 +291,96 @@ class AgentSchemas(BaseModel):
 
     # 그래프 실행 설정의 JSON Schema (config 파라미터)
     config_schema: dict[str, Any] = Field(..., description="JSON Schema for agent config")
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: Agent 모델 (Assistant 확장)
+# ---------------------------------------------------------------------------
+
+
+class AgentCapabilities(BaseModel):
+    """에이전트 기능 정의 모델 (Agent Protocol v0.2.0)
+
+    에이전트가 지원하는 기능들을 나타내는 capability 맵입니다.
+    클라이언트는 이 정보를 사용하여 에이전트의 기능을 사전에 파악할 수 있습니다.
+
+    표준 기능 (Agent Protocol v0.2.0):
+    - streaming: 실시간 스트리밍 응답 지원 여부
+    - checkpoints: 체크포인트 기반 상태 관리 지원 여부
+    - store: 장기 메모리 저장소 지원 여부
+
+    LangGraph 확장 기능:
+    - human_in_the_loop: HITL (interrupt_before/after) 지원 여부
+    - subgraphs: 서브그래프 구성 지원 여부
+
+    사용 예:
+        capabilities = AgentCapabilities(
+            streaming=True,
+            checkpoints=True,
+            human_in_the_loop=True,
+            store=True
+        )
+    """
+
+    # Agent Protocol v0.2.0 표준 기능
+    streaming: bool = Field(True, description="SSE 스트리밍 응답 지원")
+    checkpoints: bool = Field(True, description="체크포인트 기반 상태 관리 지원")
+    store: bool = Field(True, description="LangGraph Store 장기 메모리 지원")
+
+    # LangGraph 확장 기능 (스펙에는 없지만 유용한 기능)
+    human_in_the_loop: bool = Field(
+        True, description="HITL (interrupt_before/after) 지원 - LangGraph 확장"
+    )
+    subgraphs: bool = Field(True, description="서브그래프 구성 지원 - LangGraph 확장")
+
+
+class Agent(Assistant):
+    """에이전트 엔티티 모델 (Agent Protocol v0.2.0)
+
+    Assistant 모델을 확장하여 Agent Protocol v0.2.0 스펙을 준수합니다.
+    /agents/* 엔드포인트에서 사용되며, 기존 /assistants/* 와 호환됩니다.
+
+    추가 필드:
+    - capabilities: 에이전트가 지원하는 기능 맵
+
+    하위 호환성:
+    - 모든 Assistant 필드를 상속
+    - capabilities 필드만 추가됨
+    - /assistants/* 응답을 Agent로 변환 가능
+
+    사용 예:
+        # Assistant를 Agent로 변환
+        assistant = await get_assistant(assistant_id)
+        agent = Agent(
+            **assistant.model_dump(),
+            capabilities=AgentCapabilities()
+        )
+
+    참고:
+        - capabilities는 기본값으로 모든 기능이 활성화됨
+        - 특정 그래프가 기능을 지원하지 않는 경우 개별 비활성화 가능
+    """
+
+    # Agent Protocol v0.2.0 추가 필드
+    capabilities: AgentCapabilities = Field(
+        default_factory=AgentCapabilities, description="에이전트 지원 기능 맵"
+    )
+
+
+class AgentList(BaseModel):
+    """에이전트 목록 응답 모델 (Agent Protocol v0.2.0)
+
+    /agents 엔드포인트의 응답 모델입니다.
+    AssistantList와 동일한 구조이나 Agent 모델을 사용합니다.
+
+    필드:
+    - agents: 현재 페이지의 에이전트 목록
+    - total: 전체 에이전트 개수
+
+    사용 예:
+        GET /agents?limit=20&offset=0
+        -> AgentList(agents=[...], total=150)
+    """
+
+    agents: list[Agent] = Field(..., description="에이전트 목록")
+    total: int = Field(..., description="전체 에이전트 개수")

@@ -48,6 +48,8 @@ from ..models import (
     StoreDeleteRequest,
     StoreGetResponse,
     StoreItem,
+    StoreNamespaceRequest,
+    StoreNamespaceResponse,
     StorePutRequest,
     StoreSearchRequest,
     StoreSearchResponse,
@@ -375,3 +377,99 @@ def apply_user_namespace_scoping(user_id: str, namespace: Sequence[str] | None) 
 
     # 개발 환경에서는 모든 네임스페이스 허용 (프로덕션에서는 이 부분 제거)
     return namespace_list
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: 네임스페이스 조회 엔드포인트
+# ---------------------------------------------------------------------------
+
+
+@router.post("/store/namespaces", response_model=StoreNamespaceResponse)
+async def list_namespaces(
+    request: StoreNamespaceRequest | None = None,
+    user: User = Depends(get_current_user),
+) -> StoreNamespaceResponse:
+    """저장소 네임스페이스 목록 조회 (Agent Protocol v0.2.0)
+
+    저장소에 존재하는 네임스페이스 목록을 반환합니다.
+    사용자별 격리를 적용하여 해당 사용자의 네임스페이스만 조회됩니다.
+
+    주요 사용 사례:
+    - 저장된 데이터의 구조 파악
+    - 네임스페이스 기반 데이터 탐색
+    - 사용자 데이터 인벤토리
+
+    동작 흐름:
+    1. 요청 파라미터 파싱 (prefix, limit, offset)
+    2. 사용자 스코핑 적용
+    3. LangGraph Store에서 네임스페이스 목록 조회
+    4. 페이지네이션 적용하여 반환
+
+    Args:
+        request (StoreNamespaceRequest | None): 조회 옵션
+            - prefix: 네임스페이스 접두사 필터 (선택)
+            - limit: 최대 반환 개수 (기본: 100)
+            - offset: 시작 위치 (기본: 0)
+        user (User): 인증된 사용자
+
+    Returns:
+        StoreNamespaceResponse: 네임스페이스 목록
+            - namespaces: 네임스페이스 목록 (각각 문자열 리스트)
+            - total: 반환된 네임스페이스 개수
+
+    사용 예:
+        # 모든 네임스페이스 조회
+        POST /store/namespaces
+        {}
+
+        # 특정 접두사로 필터링
+        POST /store/namespaces
+        {
+            "prefix": ["users", "user123"],
+            "limit": 50
+        }
+
+    참고:
+        - 사용자 스코핑이 자동 적용됨
+        - LangGraph Store의 list_namespaces() 사용
+        - 대량의 네임스페이스가 있는 경우 페이지네이션 권장
+    """
+    # 요청 파라미터 파싱
+    prefix = request.prefix if request else None
+    limit = request.limit if request else 100
+    offset = request.offset if request else 0
+
+    # 사용자 스코핑 적용
+    scoped_prefix = apply_user_namespace_scoping(user.identity, prefix)
+
+    # LangGraph Store 인스턴스 획득
+    from ..core.database import db_manager
+
+    store = await db_manager.get_store()
+
+    try:
+        # LangGraph Store에서 네임스페이스 목록 조회
+        # list_namespaces는 prefix 튜플을 받아 해당 접두사로 시작하는 네임스페이스 반환
+        namespaces_result = await store.alist_namespaces(
+            prefix=tuple(scoped_prefix) if scoped_prefix else None,
+            limit=limit,
+            offset=offset,
+        )
+
+        # 결과를 리스트로 변환
+        namespaces = [list(ns) for ns in namespaces_result]
+
+        return StoreNamespaceResponse(
+            namespaces=namespaces,
+            total=len(namespaces),
+        )
+
+    except AttributeError:
+        # alist_namespaces가 지원되지 않는 경우 빈 목록 반환
+        # 일부 Store 구현에서는 이 메서드가 없을 수 있음
+        return StoreNamespaceResponse(
+            namespaces=[],
+            total=0,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to list namespaces: {str(e)}") from e

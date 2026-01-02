@@ -66,10 +66,10 @@ def main() -> None:
 
     port = int(os.getenv("PORT", "8000"))
 
-    print("🚀 Starting OpenSource LangGraph Platform...")
-    print(f"📍 Server will be available at: http://localhost:{port}")
-    print(f"📊 API docs will be available at: http://localhost:{port}/docs")
-    print("🧪 Test with: python test_sdk_integration.py")
+    print("Starting OpenSource LangGraph Platform...")
+    print(f"Server will be available at: http://localhost:{port}")
+    print(f"API docs will be available at: http://localhost:{port}/docs")
+    print("Test with: python test_sdk_integration.py")
 
     uvicorn.run(
         "src.agent_server.main:app",

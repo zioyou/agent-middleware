@@ -4,8 +4,8 @@ These tests verify the A2A JSON-RPC endpoints with mocked LLM responses.
 No API keys required - uses FakeListChatModel.
 """
 
-import pytest
 import httpx
+import pytest
 
 from .conftest import build_jsonrpc_message_send
 

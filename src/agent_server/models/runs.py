@@ -53,7 +53,20 @@ class RunCreate(BaseModel):
     - input과 command는 상호 배타적 (둘 중 하나만 지정 가능)
     - 빈 input dict는 command 존재 시 None으로 처리 (프론트엔드 호환성)
     - 둘 다 None이면 오류 발생
+
+    Agent Protocol v0.2.0 호환:
+    - thread_id: standalone /runs 엔드포인트에서 사용 (body에 포함)
+    - /threads/{thread_id}/runs 경로에서는 path parameter가 우선
     """
+
+    # ---------------------------------------------------------------------------
+    # Agent Protocol v0.2.0: Standalone /runs 지원
+    # ---------------------------------------------------------------------------
+    thread_id: str | None = Field(
+        None,
+        description="스레드 ID. standalone /runs 엔드포인트에서 필수. "
+        "/threads/{thread_id}/runs 경로에서는 path parameter가 우선",
+    )
 
     # 필수 필드
     assistant_id: str = Field(..., description="실행할 어시스턴트(그래프) ID")
@@ -239,3 +252,73 @@ class RunStatus(BaseModel):
     run_id: str  # 실행 ID
     status: str  # 현재 상태
     message: str | None = None  # 선택적 상태 메시지
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: 추가 모델
+# ---------------------------------------------------------------------------
+
+
+class RunSearchRequest(BaseModel):
+    """실행 검색 요청 모델 (Agent Protocol v0.2.0)
+
+    모든 스레드에 걸쳐 실행을 검색하기 위한 요청 모델입니다.
+    POST /runs/search 엔드포인트에서 사용됩니다.
+
+    필터 옵션:
+    - thread_id: 특정 스레드의 실행만 검색
+    - assistant_id: 특정 어시스턴트의 실행만 검색
+    - status: 특정 상태의 실행만 검색 (pending, running, completed 등)
+    - metadata: JSONB 메타데이터 필터링
+
+    페이지네이션:
+    - limit: 최대 결과 수 (1~100, 기본값: 20)
+    - offset: 시작 위치 (기본값: 0)
+
+    사용 예:
+        # 특정 어시스턴트의 완료된 실행 검색
+        request = RunSearchRequest(
+            assistant_id="weather_agent",
+            status="completed",
+            limit=10
+        )
+    """
+
+    thread_id: str | None = Field(None, description="특정 스레드로 필터링")
+    assistant_id: str | None = Field(None, description="특정 어시스턴트로 필터링")
+    status: str | None = Field(
+        None, description="상태로 필터링 (pending, running, completed, failed, cancelled)"
+    )
+    metadata: dict[str, Any] | None = Field(None, description="메타데이터 필터")
+    limit: int = Field(20, ge=1, le=100, description="최대 결과 수")
+    offset: int = Field(0, ge=0, description="결과 시작 위치")
+
+
+class RunWaitResponse(BaseModel):
+    """Stateless 실행 완료 응답 모델 (Agent Protocol v0.2.0)
+
+    POST /runs/wait 엔드포인트의 응답 모델입니다.
+    실행이 완료될 때까지 대기한 후 최종 결과를 반환합니다.
+
+    필드:
+    - run_id: 생성된 실행 ID
+    - thread_id: 사용된 스레드 ID
+    - status: 최종 실행 상태
+    - output: 실행 결과 (완료 시)
+    - error: 오류 정보 (실패 시)
+
+    사용 예:
+        # Stateless 실행 결과
+        response = RunWaitResponse(
+            run_id="run_123",
+            thread_id="thread_456",
+            status="completed",
+            output={"messages": [...]}
+        )
+    """
+
+    run_id: str = Field(..., description="실행 ID")
+    thread_id: str = Field(..., description="스레드 ID")
+    status: str = Field(..., description="최종 상태 (completed, failed, cancelled)")
+    output: dict[str, Any] | None = Field(None, description="실행 결과 (완료 시)")
+    error: str | None = Field(None, description="오류 메시지 (실패 시)")

@@ -31,8 +31,9 @@ _task_store = InMemoryTaskStore()
 def _get_langgraph_service():
     """Get LangGraph service (lazy import to avoid circular deps)"""
     try:
-        from ..services.langgraph_service import langgraph_service
-        return langgraph_service
+        from ..services.langgraph_service import get_langgraph_service
+
+        return get_langgraph_service()
     except ImportError:
         return None
 
@@ -40,6 +41,7 @@ def _get_langgraph_service():
 def _get_base_url() -> str:
     """Get server base URL"""
     import os
+
     host = os.getenv("SERVER_HOST", "localhost")
     port = os.getenv("SERVER_PORT", "8000")
     scheme = os.getenv("SERVER_SCHEME", "http")
@@ -64,22 +66,20 @@ async def get_or_create_a2a_app(graph_id: str) -> A2AFastAPIApplication:
 
     service = _get_langgraph_service()
     if service is None:
-        raise HTTPException(
-            status_code=500,
-            detail="LangGraph service not available"
-        )
+        raise HTTPException(status_code=500, detail="LangGraph service not available")
 
-    graph = service.get_graph(graph_id)
+    try:
+        graph = await service.get_graph(graph_id)
+    except ValueError:
+        # Service raises ValueError when graph not in registry
+        raise HTTPException(status_code=404, detail=f"Graph '{graph_id}' not found") from None
+
     if graph is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Graph '{graph_id}' not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Graph '{graph_id}' not found")
 
     if not is_a2a_compatible(graph):
         raise HTTPException(
-            status_code=404,
-            detail=f"Graph '{graph_id}' is not A2A compatible (no 'messages' field)"
+            status_code=404, detail=f"Graph '{graph_id}' is not A2A compatible (no 'messages' field)"
         )
 
     # Create Agent Card
@@ -127,13 +127,15 @@ async def list_a2a_agents() -> dict:
     base_url = _get_base_url()
 
     for graph_id in service.get_graph_ids():
-        graph = service.get_graph(graph_id)
+        graph = await service.get_graph(graph_id)
         if graph and is_a2a_compatible(graph):
-            agents.append({
-                "graph_id": graph_id,
-                "agent_card_url": f"{base_url}/a2a/{graph_id}/.well-known/agent-card.json",
-                "endpoint_url": f"{base_url}/a2a/{graph_id}",
-            })
+            agents.append(
+                {
+                    "graph_id": graph_id,
+                    "agent_card_url": f"{base_url}/a2a/{graph_id}/.well-known/agent-card.json",
+                    "endpoint_url": f"{base_url}/a2a/{graph_id}",
+                }
+            )
 
     return {"agents": agents, "count": len(agents)}
 
@@ -201,7 +203,7 @@ async def handle_a2a_get(graph_id: str, request: Request) -> Response:  # noqa: 
             "message": "A2A endpoint ready",
             "graph_id": graph_id,
             "hint": "Use POST for JSON-RPC requests, GET /.well-known/agent-card.json for agent card",
-        }
+        },
     )
 
 

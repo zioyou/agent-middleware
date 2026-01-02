@@ -70,8 +70,10 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from .a2a.router import router as a2a_router
+from .api.agents import router as agents_router
 from .api.assistants import router as assistants_router
 from .api.runs import router as runs_router
+from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
 from .api.threads import router as threads_router
 from .core.auth_middleware import get_auth_backend, on_auth_error
@@ -226,16 +228,28 @@ app.include_router(health_router, prefix="", tags=["Health"])
 # open_langgraph.json에 정의된 그래프들이 어시스턴트로 노출됨
 app.include_router(assistants_router, prefix="", tags=["Assistants"])
 
+# /agents - Agent Protocol v0.2.0 호환 에이전트 엔드포인트
+# /assistants의 별칭으로, capabilities 필드 추가
+app.include_router(agents_router, prefix="", tags=["Agents"])
+
 # /threads - 대화 스레드 생성, 조회, 수정, 삭제 (CRUD)
 # LangGraph 체크포인트 기반 대화 상태 관리
+# Agent Protocol v0.2.0: /threads/{id}/copy 엔드포인트 포함
 app.include_router(threads_router, prefix="", tags=["Threads"])
 
-# /runs - 에이전트 실행 및 실시간 스트리밍
+# /runs - 에이전트 실행 및 실시간 스트리밍 (레거시 경로)
 # SSE(Server-Sent Events)를 통한 스트리밍 지원
+# 경로: /threads/{thread_id}/runs/*
 app.include_router(runs_router, prefix="", tags=["Runs"])
+
+# /runs - Agent Protocol v0.2.0 호환 standalone 실행 엔드포인트
+# thread_id를 body에서 받으며, stateless 실행 지원
+# 경로: /runs/* (thread_id는 body에)
+app.include_router(runs_standalone_router, prefix="", tags=["Runs (Standalone)"])
 
 # /store - LangGraph Store를 통한 장기 메모리 관리
 # 사용자별, 스레드별 영구 데이터 저장소 (JSONB)
+# Agent Protocol v0.2.0: /store/namespaces 엔드포인트 포함
 app.include_router(store_router, prefix="", tags=["Store"])
 
 # /a2a - A2A (Agent-to-Agent) Protocol endpoints

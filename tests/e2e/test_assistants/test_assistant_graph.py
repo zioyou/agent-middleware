@@ -1,4 +1,5 @@
 import pytest
+from langgraph_sdk.errors import NotFoundError
 
 from tests.e2e._utils import elog, get_e2e_client
 
@@ -140,13 +141,10 @@ async def test_get_assistant_graph_not_found():
     client = get_e2e_client()
 
     # Try to get graph for non-existent assistant
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(NotFoundError):
         await client.assistants.get_graph(
             assistant_id="00000000-0000-0000-0000-000000000000"
         )
-
-    # Verify it's a 404 error
-    assert "404" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
 
     elog("Graph endpoint correctly returns 404 for non-existent assistant", {})
 
@@ -243,13 +241,10 @@ async def test_get_assistant_subgraphs_not_found():
     client = get_e2e_client()
 
     # Try to get subgraphs for non-existent assistant
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(NotFoundError):
         await client.assistants.get_subgraphs(
             assistant_id="00000000-0000-0000-0000-000000000000"
         )
-
-    # Verify it's a 404 error
-    assert "404" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
 
     elog("Subgraphs endpoint correctly returns 404 for non-existent assistant", {})
 
