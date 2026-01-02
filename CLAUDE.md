@@ -15,11 +15,14 @@ uv install
 # Activate virtual environment (IMPORTANT for migrations)
 source .venv/bin/activate
 
-# Start database
+# Option A: PostgreSQL (production-like)
 docker compose up postgres -d
-
-# Apply migrations
 python3 scripts/migrate.py upgrade
+
+# Option B: SQLite (no Docker needed - great for quick local dev!)
+uv pip install ".[sqlite]"
+export DATABASE_URL="sqlite:///./data/open_langgraph.db"
+# SQLite tables are created automatically on first use
 ```
 
 ### Running the Application
@@ -167,11 +170,25 @@ Open LangGraph is an **Agent Protocol server** that acts as an HTTP wrapper arou
 
 ### Core Integration Pattern
 
-**Database Architecture**: The system uses a hybrid approach:
+**Database Architecture**: The system uses a hybrid approach with multi-database support:
 
-- **LangGraph manages state**: Official `AsyncPostgresSaver` and `AsyncPostgresStore` handle conversation checkpoints, state history, and long-term memory
+- **LangGraph manages state**: Official checkpointers and stores handle conversation checkpoints, state history, and long-term memory
 - **Minimal metadata tables**: Our SQLAlchemy models only track Agent Protocol metadata (assistants, runs, thread_metadata)
-- **URL format difference**: LangGraph requires `postgresql://` while our SQLAlchemy uses `postgresql+asyncpg://`
+- **Multi-database support**:
+  - **PostgreSQL** (production): `AsyncPostgresSaver`, `AsyncPostgresStore`
+  - **SQLite** (local dev): `AsyncSqliteSaver`, `AsyncSqliteStore` - Install with `uv pip install ".[sqlite]"`
+
+**Database URL formats**:
+```bash
+# PostgreSQL (production)
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/open_langgraph
+
+# SQLite (local development - no Docker needed!)
+DATABASE_URL=sqlite:///./data/open_langgraph.db
+
+# SQLite in-memory (testing)
+DATABASE_URL=sqlite:///:memory:
+```
 
 ### Configuration System
 
