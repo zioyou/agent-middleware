@@ -52,7 +52,7 @@ def dev(
     # Set config path as environment variable
     os.environ["OPEN_LANGGRAPH_CONFIG"] = str(config_path.absolute())
 
-    console.print(f"\n[bold]Starting Open LangGraph development server[/bold]\n")
+    console.print("\n[bold]Starting Open LangGraph development server[/bold]\n")
     console.print(f"  Config: {config_path}")
     console.print(f"  Server: http://{host}:{port}")
     console.print(f"  Docs:   http://{host}:{port}/docs")
@@ -79,4 +79,4 @@ def dev(
         raise typer.Exit(code=result.returncode)
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped[/yellow]")
-        raise typer.Exit(code=0)
+        raise typer.Exit(code=0) from None

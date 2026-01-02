@@ -3,7 +3,6 @@
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import typer
 from jinja2 import Environment, FileSystemLoader
@@ -23,7 +22,7 @@ TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 
 
 def init(
-    path: Optional[Path] = typer.Argument(
+    path: Path | None = typer.Argument(
         None,
         help="Path where to create the project",
     ),
@@ -64,9 +63,7 @@ def init(
     # Check if path exists and is not empty
     if path.exists():
         if any(path.iterdir()):
-            console.print(
-                f"[red]Error:[/red] Directory '{path}' exists and is not empty"
-            )
+            console.print(f"[red]Error:[/red] Directory '{path}' exists and is not empty")
             raise typer.Exit(code=1)
     else:
         path.mkdir(parents=True)

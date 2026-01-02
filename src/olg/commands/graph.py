@@ -31,18 +31,17 @@ def add(
     config_path = Path(CONFIG_FILE)
     if not config_path.exists():
         console.print(
-            f"[red]Error:[/red] {CONFIG_FILE} not found. "
-            "Are you in an Open LangGraph project directory?"
+            f"[red]Error:[/red] {CONFIG_FILE} not found. Are you in an Open LangGraph project directory?"
         )
         raise typer.Exit(code=1)
 
     # Load config
     try:
-        with open(config_path) as f:
+        with config_path.open() as f:
             config = json.load(f)
     except json.JSONDecodeError as e:
         console.print(f"[red]Error:[/red] Invalid JSON in {CONFIG_FILE}: {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # Check if graph already exists in config
     if name in config.get("graphs", {}):
@@ -81,7 +80,7 @@ def add(
         config["graphs"] = {}
     config["graphs"][name] = f"./{graph_file}:graph"
 
-    with open(config_path, "w") as f:
+    with config_path.open("w") as f:
         json.dump(config, f, indent=2)
     console.print(f"[green]Updated:[/green] {CONFIG_FILE}")
 

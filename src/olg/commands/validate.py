@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -13,7 +12,7 @@ DEFAULT_CONFIG = "open_langgraph.json"
 
 
 def validate(
-    config: Optional[Path] = typer.Option(
+    config: Path | None = typer.Option(
         None,
         "--config",
         "-c",
@@ -30,11 +29,11 @@ def validate(
 
     # Try to parse JSON
     try:
-        with open(config_path) as f:
+        with config_path.open() as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         console.print(f"[red]Error:[/red] Invalid JSON: {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # Validate required keys
     if "graphs" not in data:
@@ -48,9 +47,7 @@ def validate(
     # Validate graph definitions
     for graph_id, graph_path in data["graphs"].items():
         if not isinstance(graph_path, str):
-            console.print(
-                f"[red]Error:[/red] Graph '{graph_id}' path must be a string"
-            )
+            console.print(f"[red]Error:[/red] Graph '{graph_id}' path must be a string")
             raise typer.Exit(code=1)
 
         if ":" not in graph_path:
@@ -62,8 +59,6 @@ def validate(
 
     # Success
     graph_count = len(data["graphs"])
-    console.print(
-        f"[green]Valid![/green] Configuration has {graph_count} graph(s) defined."
-    )
+    console.print(f"[green]Valid![/green] Configuration has {graph_count} graph(s) defined.")
     for graph_id in data["graphs"]:
         console.print(f"  - {graph_id}")
