@@ -1,0 +1,31 @@
+"""{{ project_name }} - Basic ReAct Agent."""
+
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+
+
+class AgentState(TypedDict):
+    """State for the agent graph."""
+
+    messages: Annotated[list, add_messages]
+
+
+def chatbot(state: AgentState) -> dict:
+    """Process messages and generate response."""
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+# Build the graph
+workflow = StateGraph(AgentState)
+workflow.add_node("chatbot", chatbot)
+workflow.set_entry_point("chatbot")
+workflow.set_finish_point("chatbot")
+
+# Export compiled graph
+graph = workflow.compile()

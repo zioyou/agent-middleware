@@ -3,6 +3,7 @@
 import typer
 from rich.console import Console
 
+from olg.commands.init import init
 from olg.commands.validate import validate
 
 app = typer.Typer(
@@ -13,6 +14,7 @@ app = typer.Typer(
 console = Console()
 
 # Register commands
+app.command()(init)
 app.command()(validate)
 
 
