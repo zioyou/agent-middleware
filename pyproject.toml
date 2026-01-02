@@ -47,10 +47,21 @@ dependencies = [
     "a2a-sdk[http-server]>=0.3.22",
 ]
 
+[project.optional-dependencies]
+cli = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "jinja2>=3.1.0",
+]
+
+[project.scripts]
+olg = "olg.cli:app"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_server"]
+packages = ["src/agent_server", "src/olg"]
 
 [tool.hatch.build.targets.wheel.sources]
+"src/olg" = "olg"
 "graphs/react_agent" = "react_agent"
 
 [tool.ruff]
