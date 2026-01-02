@@ -3,6 +3,7 @@
 import typer
 from rich.console import Console
 
+from olg.commands.dev import dev
 from olg.commands.graph import graph_app
 from olg.commands.init import init
 from olg.commands.validate import validate
@@ -17,6 +18,7 @@ console = Console()
 # Register commands
 app.command()(init)
 app.command()(validate)
+app.command()(dev)
 app.add_typer(graph_app)
 
 
