@@ -1,0 +1,31 @@
+# {{ project_name }}
+
+An A2A (Agent-to-Agent) Protocol compatible agent.
+
+## Features
+
+- **A2A Protocol**: Automatically exposes A2A endpoints
+- **Agent Card**: Discoverable via `/.well-known/agent-card.json`
+- **Streaming**: Full SSE streaming support
+
+## A2A Endpoints
+
+Once running, your agent is accessible at:
+
+- Agent Card: `GET /a2a/{{ graph_name }}/.well-known/agent-card.json`
+- Send Message: `POST /a2a/{{ graph_name }}/messages`
+- Task Status: `GET /a2a/{{ graph_name }}/tasks/{task_id}`
+
+## Integration
+
+Other A2A agents can discover and call this agent using the standard protocol.
+
+## Project Structure
+
+```
+{{ project_name }}/
+├── graphs/
+│   └── agent.py      # A2A agent graph
+├── open_langgraph.json  # Configuration
+└── .env              # Environment variables
+```

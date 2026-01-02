@@ -64,3 +64,38 @@ class TestInitCommand:
 
         assert result.exit_code == 0
         assert "basic-agent" in result.stdout
+
+    def test_init_hitl_template(self, tmp_path: Path):
+        """Test init with HITL template."""
+        project_path = tmp_path / "my-hitl-agent"
+
+        result = runner.invoke(
+            app, ["init", str(project_path), "--template", "hitl-agent"]
+        )
+
+        assert result.exit_code == 0
+        assert (project_path / "graphs" / "agent.py").exists()
+        content = (project_path / "graphs" / "agent.py").read_text()
+        assert "interrupt" in content
+
+    def test_init_a2a_template(self, tmp_path: Path):
+        """Test init with A2A template."""
+        project_path = tmp_path / "my-a2a-agent"
+
+        result = runner.invoke(
+            app, ["init", str(project_path), "--template", "a2a-agent"]
+        )
+
+        assert result.exit_code == 0
+        assert (project_path / "graphs" / "agent.py").exists()
+        content = (project_path / "graphs" / "agent.py").read_text()
+        assert "attach_a2a_metadata" in content
+
+    def test_init_all_templates_listed(self, tmp_path: Path):
+        """Test that all templates are listed in --list-templates."""
+        result = runner.invoke(app, ["init", "--list-templates"])
+
+        assert result.exit_code == 0
+        assert "basic-agent" in result.stdout
+        assert "hitl-agent" in result.stdout
+        assert "a2a-agent" in result.stdout

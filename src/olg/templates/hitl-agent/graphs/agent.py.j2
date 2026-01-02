@@ -1,0 +1,57 @@
+"""{{ project_name }} - Human-in-the-Loop Agent."""
+
+from typing import Annotated, Literal, TypedDict
+
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.types import interrupt
+
+
+class AgentState(TypedDict):
+    """State for the HITL agent graph."""
+
+    messages: Annotated[list, add_messages]
+    pending_approval: bool
+
+
+def chatbot(state: AgentState) -> dict:
+    """Process messages and generate response."""
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    response = llm.invoke(state["messages"])
+    return {"messages": [response], "pending_approval": True}
+
+
+def approval_gate(state: AgentState) -> dict:
+    """Request human approval before proceeding."""
+    last_message = state["messages"][-1]
+
+    # Interrupt for human approval
+    decision = interrupt({
+        "type": "approval_request",
+        "content": last_message.content,
+        "message": "Please approve or reject this response",
+    })
+
+    return {"pending_approval": False}
+
+
+def route_approval(state: AgentState) -> Literal["approval_gate", "__end__"]:
+    """Route based on whether approval is needed."""
+    if state.get("pending_approval"):
+        return "approval_gate"
+    return "__end__"
+
+
+# Build the graph
+workflow = StateGraph(AgentState)
+workflow.add_node("chatbot", chatbot)
+workflow.add_node("approval_gate", approval_gate)
+
+workflow.set_entry_point("chatbot")
+workflow.add_conditional_edges("chatbot", route_approval)
+workflow.set_finish_point("approval_gate")
+
+# Export compiled graph with interrupt support
+graph = workflow.compile(interrupt_before=["approval_gate"])

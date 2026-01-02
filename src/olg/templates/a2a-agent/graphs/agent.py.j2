@@ -1,0 +1,46 @@
+"""{{ project_name }} - A2A Protocol Compatible Agent."""
+
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+
+from agent_server.a2a.decorators import attach_a2a_metadata
+
+
+class AgentState(TypedDict):
+    """State for the A2A agent graph.
+
+    Note: The 'messages' field is required for A2A compatibility.
+    """
+
+    messages: Annotated[list, add_messages]
+
+
+def chatbot(state: AgentState) -> dict:
+    """Process messages and generate response."""
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+# Build the graph
+workflow = StateGraph(AgentState)
+workflow.add_node("chatbot", chatbot)
+workflow.set_entry_point("chatbot")
+workflow.set_finish_point("chatbot")
+
+# Export compiled graph with A2A metadata
+graph = workflow.compile()
+
+# Attach A2A metadata for agent discovery
+attach_a2a_metadata(
+    graph,
+    name="{{ project_name }}",
+    description="An A2A-compatible agent built with Open LangGraph",
+    skills=[
+        {"id": "chat", "name": "Chat", "description": "General conversation"},
+    ],
+)
