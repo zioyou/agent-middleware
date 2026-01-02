@@ -1,0 +1,31 @@
+"""{{ graph_name }} graph."""
+
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+
+
+class {{ class_name }}State(TypedDict):
+    """State for {{ graph_name }} graph."""
+
+    messages: Annotated[list, add_messages]
+
+
+def process(state: {{ class_name }}State) -> dict:
+    """Process the state and return updates."""
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+# Build the graph
+workflow = StateGraph({{ class_name }}State)
+workflow.add_node("process", process)
+workflow.set_entry_point("process")
+workflow.set_finish_point("process")
+
+# Export compiled graph
+graph = workflow.compile()
