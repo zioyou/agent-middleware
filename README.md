@@ -1,19 +1,18 @@
-# 오픈소스 LangGraph Platform
+# Open LangGraph Platform
 
 셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요
-
----
-
 LangGraph Platform을 자체 인프라로 대체하세요.  
 에이전트 오케스트레이션을 완전히 제어하고자 하는 개발자를 위해 FastAPI + PostgreSQL로 구축되었습니다.
 
 **Agent Protocol 준수**: Open LangGraph는 프로덕션 환경에서 LLM 에이전트를 제공하기 위한 오픈소스 표준인 [Agent Protocol](https://github.com/langchain-ai/agent-protocol) 사양을 구현합니다.
 
-## 왜 LangGraph Platform 대신 Open LangGraph인가?
+---
+
+## 왜 LangSmith 대신 Open LangGraph Platform 인가?
 
 | 기능                | LangGraph Platform         | Open LangGraph (셀프 호스팅)                               |
 | ---------------------- | -------------------------- | ------------------------------------------------- |
-| **비용**               | 월 $$$+             | **무료** (셀프 호스팅, 인프라 비용만 발생)           |
+| **비용**               | 월 $$$             | **무료** (셀프 호스팅, 인프라 비용만 발생)           |
 | **데이터 제어**       | 타사 호스팅         | **자체 인프라**                           |
 | **벤더 종속**     | 높은 의존성            | **제로 종속**                                  |
 | **커스터마이징**      | 플랫폼 제한사항       | **완전한 제어**                                  |
@@ -21,7 +20,7 @@ LangGraph Platform을 자체 인프라로 대체하세요.
 | **인증**     | Lite: 커스텀 인증 불가       | **커스텀 인증** (JWT/OAuth/Firebase/NoAuth)       |
 | **데이터베이스 소유권** | 자체 데이터베이스 불가 | **BYO Postgres** (자격 증명 및 스키마 소유) |
 | **Human-in-the-Loop** | 지원 | **완전 지원** (승인 게이트, 사용자 개입) |
-| **관찰성/추적**  | LangSmith 강제   | **선택 가능** ([Langfuse](docs/langfuse-usage.md)/None) |
+| **관찰성/추적**  | LangSmith 강제   | **선택 가능** ([Langfuse](docs/langfuse-usage.md)) |
 
 ## 핵심 이점
 
@@ -36,18 +35,19 @@ LangGraph Platform을 자체 인프라로 대체하세요.
 
 ### 사전 요구사항
 
-- Python 3.11+
+- Python 3.13+
 - Docker (PostgreSQL용)
 - uv (Python 패키지 매니저)
 
 ### 실행하기
 
 ```bash
+# uv가 없다면 설치
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # 클론 및 설정
 git clone https://github.com/HyunjunJeon/open-langgraph-platform.git
 cd open-langgraph
-# uv가 없다면 설치
-curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 환경 및 의존성 동기화
 uv sync
@@ -59,7 +59,7 @@ source .venv/bin/activate  # Mac/Linux
 # 환경 변수
 cp .env.example .env
 
-# 모든 것 시작 (데이터베이스 + 마이그레이션 + 서버)
+# 시작 (데이터베이스 + 마이그레이션 + 서버)
 docker compose up open-langgraph
 ```
 
@@ -73,15 +73,13 @@ curl http://localhost:8000/health
 open http://localhost:8000/docs
 ```
 
-이제 셀프 호스팅 LangGraph Platform 대안이 로컬에서 실행되고 있습니다.
+이제 Open LangGraph Platform 로컬의 Docker 환경에서 실행되고 있습니다.
 
 ## 호환 UI 툴킷
 
-Open LangGraph는 LangGraph/Agent Protocol API를 지원하는 여러 프론트엔드와 호환됩니다.
+Open LangGraph는 LangGraph API를 지원하는 여러 프론트엔드와 호환됩니다.
 
-### Agent Chat UI (LangChain)
-
-공식 대화형 에이전트 UI로, 바로 연동할 수 있습니다.
+### Agent Chat UI (Official LangChain's UI)
 
 설정 예시:
 ```bash
@@ -92,7 +90,6 @@ NEXT_PUBLIC_ASSISTANT_ID=agent
 
 참고 자료:
 - Agent Chat UI GitHub: https://github.com/langchain-ai/agent-chat-ui
-- 상태: 완전 지원
 
 ### CopilotKit (AG-UI 프로토콜)
 
@@ -138,9 +135,9 @@ function YourAgentInterface() {
 }
 ```
 
-백엔드 준비(Open LangGraph):
+백엔드 준비(Open LangGraph Platform):
 ```bash
-docker compose up open-langgraph
+docker compose up open-langgraph-platform
 # http://localhost:8000에서 에이전트가 동작하며 CopilotKit이 SSE로 연결합니다
 ```
 
@@ -163,13 +160,6 @@ docker compose up open-langgraph
 - SSE 기반 스트리밍
 - LangGraph SDK 프로토콜
 - Agent Protocol 사양
-
-## 개발자를 위한 정보
-
-**데이터베이스 마이그레이션이 처음이신가요?** 가이드를 확인하세요:
-
-- [개발자 가이드](docs/developer-guide.md) - 설정, 마이그레이션 및 개발 워크플로우
-- [마이그레이션 치트시트](docs/migration-cheatsheet.md) - 일반적인 명령어 빠른 참조
 
 **빠른 개발 명령어:**
 
@@ -251,8 +241,8 @@ SDK      API    Management      Storage
 ## 프로젝트 구조
 
 ```text
-open-langgraph/
-├── open_langgraph.json           # 그래프 구성
+open-langgraph-platform/
+├── open_langgraph.json  # 그래프 구성
 ├── auth.py              # 인증 설정
 ├── graphs/              # 에이전트 정의
 │   └── react_agent/     # ReAct 에이전트 예제
