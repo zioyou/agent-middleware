@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import html
 import re
-
+from typing import Any
 
 # Patterns that might indicate XSS attempts
 _SCRIPT_PATTERN = re.compile(r"<\s*script", re.IGNORECASE)
@@ -116,10 +116,9 @@ def sanitize_url(url: str | None, *, allowed_schemes: tuple[str, ...] = ("http",
     # Validate scheme
     url_lower = url.lower()
     has_valid_scheme = any(url_lower.startswith(f"{scheme}://") for scheme in allowed_schemes)
-    if not has_valid_scheme:
-        # Allow relative URLs starting with /
-        if not url.startswith("/"):
-            return None
+    # Allow relative URLs starting with / if no valid scheme
+    if not has_valid_scheme and not url.startswith("/"):
+        return None
 
     return url
 
@@ -139,27 +138,20 @@ def has_xss_patterns(text: str) -> bool:
     if not text:
         return False
 
-    if _SCRIPT_PATTERN.search(text):
-        return True
-
-    if _EVENT_HANDLER_PATTERN.search(text):
-        return True
-
-    if _JAVASCRIPT_URL_PATTERN.search(text):
-        return True
-
-    if _DATA_URL_PATTERN.search(text):
-        return True
-
-    return False
+    return bool(
+        _SCRIPT_PATTERN.search(text)
+        or _EVENT_HANDLER_PATTERN.search(text)
+        or _JAVASCRIPT_URL_PATTERN.search(text)
+        or _DATA_URL_PATTERN.search(text)
+    )
 
 
 def sanitize_dict_values(
-    data: dict[str, any],
+    data: dict[str, Any],
     *,
     keys_to_sanitize: tuple[str, ...] = ("name", "description", "title", "content", "text"),
     max_length: int = 10000,
-) -> dict[str, any]:
+) -> dict[str, Any]:
     """Recursively sanitize string values in a dictionary.
 
     Only sanitizes values for keys matching keys_to_sanitize.

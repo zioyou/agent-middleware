@@ -138,10 +138,12 @@ def _looks_like_secret(value: str) -> bool:
         return False
 
     # Check for base64-like pattern (20+ alphanumeric with possible +/=)
+    # Exclude common non-secret patterns
     import re
-    if re.match(r"^[A-Za-z0-9+/=_-]{20,}$", value):
-        # But exclude common non-secret patterns
-        if not any(word in value.lower() for word in ("localhost", "http", "path", "file")):
-            return True
+    if (
+        re.match(r"^[A-Za-z0-9+/=_-]{20,}$", value)
+        and not any(word in value.lower() for word in ("localhost", "http", "path", "file"))
+    ):
+        return True
 
     return False

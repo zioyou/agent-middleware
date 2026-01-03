@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 from a2a.client import A2AClientHTTPError, A2AClientTimeoutError

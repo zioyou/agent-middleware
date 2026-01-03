@@ -187,8 +187,11 @@ class RateLimitMiddleware:
         # 예: "org:abc123" → "streaming:org:abc123"
         key = f"{endpoint_type}:{base_key}"
 
+        # Fetch organization-specific limits if authenticated org
+        org_limits = await self._get_org_limits(base_key)
+
         # Rate limit 확인
-        limit = self._get_limit_for_endpoint(base_key, endpoint_type)
+        limit = self._get_limit_for_endpoint(base_key, endpoint_type, org_limits)
         allowed, remaining, reset_at = await rate_limiter.check_limit(
             key=key,
             limit=limit,
@@ -228,6 +231,28 @@ class RateLimitMiddleware:
 
         # 접두사 매칭
         return any(path.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
+
+    async def _get_org_limits(self, base_key: str) -> OrgRateLimits | None:
+        """조직별 rate limit 설정 조회
+
+        Args:
+            base_key: Rate limit 키 (예: "org:abc123", "user:xyz", "ip:1.2.3.4")
+
+        Returns:
+            조직 rate limit 설정 (없거나 오류 시 None)
+        """
+        # Only fetch org limits for org-based keys
+        if not base_key.startswith("org:"):
+            return None
+
+        org_id = base_key[4:]  # Remove "org:" prefix
+
+        try:
+            return await quota_service.get_org_limits(org_id)
+        except Exception as e:
+            # Log but don't fail - fall back to default limits
+            logger.debug("Failed to fetch org limits for %s: %s", org_id, e)
+            return None
 
     def _get_endpoint_type(self, path: str, method: str) -> str:
         """엔드포인트 타입 결정
