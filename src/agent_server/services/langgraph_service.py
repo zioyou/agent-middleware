@@ -28,6 +28,7 @@ from uuid import uuid5
 
 from langgraph.graph.state import CompiledStateGraph
 
+from ..a2a import AgentCardGenerator, is_a2a_compatible
 from ..constants import ASSISTANT_NAMESPACE_UUID
 from ..observability.langfuse_integration import get_tracing_callbacks
 
@@ -127,6 +128,9 @@ class LangGraphService:
         # 클라이언트가 graph_id를 직접 전달할 수 있도록 함
         await self._ensure_default_assistants()
 
+        # A2A 호환 그래프를 Agent Registry에 자동 등록
+        await self._register_a2a_agents()
+
     def _load_graph_registry(self) -> None:
         """open_langgraph.json에서 그래프 정의를 파싱하여 레지스트리에 등록
 
@@ -217,6 +221,57 @@ class LangGraphService:
             await session.commit()
         finally:
             await session.close()
+
+    async def _register_a2a_agents(self) -> None:
+        """A2A 호환 그래프를 Agent Registry에 자동 등록
+
+        이 메서드는 각 그래프를 로드하여 A2A 호환성을 확인하고,
+        호환되는 그래프에 대해 AgentCard를 생성하여 레지스트리에 등록합니다.
+
+        동작 흐름:
+        1. 모든 등록된 그래프 순회
+        2. 각 그래프 로드 및 A2A 호환성 확인 (messages 필드 존재 여부)
+        3. 호환 그래프에 대해 AgentCard 생성
+        4. AgentRegistryService에 등록
+
+        참고:
+        - 이미 등록된 에이전트는 업데이트됨 (멱등성)
+        - 비호환 그래프나 로드 실패 시 스킵 (서비스 시작에 영향 없음)
+        """
+        from .agent_registry_service import agent_registry_service
+
+        # Base URL 가져오기 (A2A 라우터와 동일한 패턴)
+        base_url = self._get_base_url()
+        generator = AgentCardGenerator(base_url=base_url)
+
+        registered_count = 0
+        for graph_id in self._graph_registry:
+            try:
+                # 그래프 로드 (캐싱 활용)
+                graph = await self.get_graph(graph_id)
+
+                # A2A 호환성 확인
+                if not is_a2a_compatible(graph):
+                    continue
+
+                # AgentCard 생성 및 등록
+                agent_card = generator.generate_for_graph(graph_id, graph)
+                await agent_registry_service.register_agent(graph_id, agent_card)
+                registered_count += 1
+
+            except Exception as e:
+                # 개별 그래프 실패는 전체 서비스에 영향을 주지 않음
+                print(f"⚠️  Failed to register A2A agent for '{graph_id}': {e}")
+
+        if registered_count > 0:
+            print(f"✅ Registered {registered_count} A2A agents")
+
+    def _get_base_url(self) -> str:
+        """서버 기본 URL 가져오기"""
+        host = os.getenv("SERVER_HOST", "localhost")
+        port = os.getenv("SERVER_PORT", "8000")
+        scheme = os.getenv("SERVER_SCHEME", "http")
+        return f"{scheme}://{host}:{port}"
 
     async def get_graph(self, graph_id: str, force_reload: bool = False) -> CompiledGraph:
         """그래프 ID로 컴파일된 그래프를 가져오기 (캐싱 및 LangGraph 통합)

@@ -90,7 +90,7 @@ async def create_assistant(
         HTTPException(400): config와 context를 동시에 지정한 경우
         HTTPException(409): 동일한 어시스턴트가 이미 존재 (if_exists="error")
     """
-    return await service.create_assistant(request, user.identity)
+    return await service.create_assistant(request, user.identity, user.org_id)
 
 
 @router.get("/assistants", response_model=AssistantList)
@@ -112,7 +112,7 @@ async def list_assistants(
             - assistants: 어시스턴트 배열
             - total: 전체 개수
     """
-    assistants = await service.list_assistants(user.identity)
+    assistants = await service.list_assistants(user.identity, user.org_id)
     return AssistantList(assistants=assistants, total=len(assistants))
 
 
@@ -147,7 +147,7 @@ async def search_assistants(
     Returns:
         list[Assistant]: 필터링 및 페이지네이션된 어시스턴트 목록
     """
-    return await service.search_assistants(request, user.identity)
+    return await service.search_assistants(request, user.identity, user.org_id)
 
 
 @router.post("/assistants/count", response_model=int)
@@ -173,7 +173,7 @@ async def count_assistants(
     Returns:
         int: 필터 조건을 만족하는 어시스턴트 총 개수
     """
-    return await service.count_assistants(request, user.identity)
+    return await service.count_assistants(request, user.identity, user.org_id)
 
 
 @router.get("/assistants/{assistant_id}", response_model=Assistant)
@@ -198,7 +198,7 @@ async def get_assistant(
     Raises:
         HTTPException(404): 어시스턴트를 찾을 수 없음
     """
-    return await service.get_assistant(assistant_id, user.identity)
+    return await service.get_assistant(assistant_id, user.identity, user.org_id)
 
 
 @router.patch("/assistants/{assistant_id}", response_model=Assistant)
@@ -239,7 +239,7 @@ async def update_assistant(
         HTTPException(400): config와 context를 동시에 지정한 경우
         HTTPException(404): 어시스턴트를 찾을 수 없음
     """
-    return await service.update_assistant(assistant_id, request, user.identity)
+    return await service.update_assistant(assistant_id, request, user.identity, user.org_id)
 
 
 @router.delete("/assistants/{assistant_id}")
@@ -264,7 +264,7 @@ async def delete_assistant(
     Raises:
         HTTPException(404): 어시스턴트를 찾을 수 없음
     """
-    return await service.delete_assistant(assistant_id, user.identity)
+    return await service.delete_assistant(assistant_id, user.identity, user.org_id)
 
 
 @router.post("/assistants/{assistant_id}/latest", response_model=Assistant)
@@ -296,7 +296,7 @@ async def set_assistant_latest(
     Raises:
         HTTPException(404): 어시스턴트 또는 버전을 찾을 수 없음
     """
-    return await service.set_assistant_latest(assistant_id, version, user.identity)
+    return await service.set_assistant_latest(assistant_id, version, user.identity, user.org_id)
 
 
 @router.post("/assistants/{assistant_id}/versions", response_model=list[Assistant])
@@ -321,7 +321,7 @@ async def list_assistant_versions(
     Raises:
         HTTPException(404): 어시스턴트 또는 버전이 없음
     """
-    return await service.list_assistant_versions(assistant_id, user.identity)
+    return await service.list_assistant_versions(assistant_id, user.identity, user.org_id)
 
 
 @router.get("/assistants/{assistant_id}/schemas")
@@ -360,7 +360,7 @@ async def get_assistant_schemas(
         HTTPException(404): 어시스턴트를 찾을 수 없음
         HTTPException(400): 스키마 추출 실패
     """
-    return await service.get_assistant_schemas(assistant_id, user.identity)
+    return await service.get_assistant_schemas(assistant_id, user.identity, user.org_id)
 
 
 @router.get("/assistants/{assistant_id}/graph")
@@ -396,7 +396,7 @@ async def get_assistant_graph(
     """
     # xray가 None이면 기본값 False로 설정 (최상위 그래프만 반환)
     xray_value = xray if xray is not None else False
-    return await service.get_assistant_graph(assistant_id, xray_value, user.identity)
+    return await service.get_assistant_graph(assistant_id, xray_value, user.identity, user.org_id)
 
 
 @router.get("/assistants/{assistant_id}/subgraphs")
@@ -429,4 +429,4 @@ async def get_assistant_subgraphs(
         HTTPException(422): 그래프가 서브그래프를 지원하지 않음
         HTTPException(400): 서브그래프 조회 실패
     """
-    return await service.get_assistant_subgraphs(assistant_id, namespace, recurse, user.identity)
+    return await service.get_assistant_subgraphs(assistant_id, namespace, recurse, user.identity, user.org_id)

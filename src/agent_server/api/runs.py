@@ -41,7 +41,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command, Send, StreamMode
-from sqlalchemy import delete, select, update
+from sqlalchemy import ColumnElement, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.auth_ctx import with_auth_ctx
@@ -70,6 +70,50 @@ active_runs: dict[str, asyncio.Task] = {}
 
 # 백그라운드 실행에 사용되는 기본 스트림 모드
 DEFAULT_STREAM_MODES: list[StreamMode] = ["values"]
+
+
+def _build_run_access_filter(
+    user_id: str,
+    org_id: str | None,
+) -> ColumnElement[bool]:
+    """실행(Run)에 대한 멀티테넌트 접근 제어 필터 조건 생성
+
+    사용자가 접근할 수 있는 실행을 필터링하는 SQLAlchemy 조건을 생성합니다.
+
+    Args:
+        user_id: 현재 사용자 식별자
+        org_id: 현재 사용자의 조직 ID (None이면 조직 필터링 안 함)
+
+    Returns:
+        ColumnElement[bool]: SQLAlchemy WHERE 조건
+    """
+    conditions: list[ColumnElement[bool]] = [RunORM.user_id == user_id]
+
+    if org_id is not None:
+        conditions.append(RunORM.org_id == org_id)
+
+    return or_(*conditions)
+
+
+def _build_thread_access_filter(
+    user_id: str,
+    org_id: str | None,
+) -> ColumnElement[bool]:
+    """스레드에 대한 멀티테넌트 접근 제어 필터 조건 생성 (runs.py 내 사용용)
+
+    Args:
+        user_id: 현재 사용자 식별자
+        org_id: 현재 사용자의 조직 ID (None이면 조직 필터링 안 함)
+
+    Returns:
+        ColumnElement[bool]: SQLAlchemy WHERE 조건
+    """
+    conditions: list[ColumnElement[bool]] = [ThreadORM.user_id == user_id]
+
+    if org_id is not None:
+        conditions.append(ThreadORM.org_id == org_id)
+
+    return or_(*conditions)
 
 
 def map_command_to_langgraph(cmd: dict[str, Any]) -> Command:
@@ -274,6 +318,7 @@ async def create_run(
         run_id=run_id,  # 명시적으로 설정 (생략 시 DB가 기본값 생성)
         thread_id=thread_id,
         assistant_id=resolved_assistant_id,
+        org_id=user.org_id,  # 멀티테넌시: 조직 공유 리소스
         status="pending",
         input=request.input or {},
         config=config,
@@ -424,6 +469,7 @@ async def create_and_stream_run(
         run_id=run_id,
         thread_id=thread_id,
         assistant_id=resolved_assistant_id,
+        org_id=user.org_id,  # 멀티테넌시: 조직 공유 리소스
         status="streaming",
         input=request.input or {},
         config=config,

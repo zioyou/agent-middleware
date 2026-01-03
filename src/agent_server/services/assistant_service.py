@@ -9,6 +9,7 @@
 • SQLAlchemy ORM을 통한 데이터베이스 작업
 • 그래프 스키마 추출 및 조작
 • 여러 컴포넌트 간 조율
+• 멀티테넌트 격리 (user_id + org_id 기반)
 
 이 서비스는 Open LangGraph의 첫 번째 서비스 계층 구현입니다.
 동일한 패턴이 다른 API(runs, threads, crons)에도 적용될 예정입니다.
@@ -17,6 +18,7 @@
 • AssistantService - 어시스턴트 CRUD 및 버전 관리
 • to_pydantic() - SQLAlchemy ORM → Pydantic 모델 변환
 • _extract_graph_schemas() - LangGraph 스키마 추출
+• _build_access_filter() - 멀티테넌트 접근 제어 필터 생성
 • get_assistant_service() - FastAPI 의존성 주입 헬퍼
 """
 
@@ -27,7 +29,7 @@ from uuid import uuid4
 
 from fastapi import Depends, HTTPException
 from langgraph.graph.state import CompiledStateGraph
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.orm import Assistant as AssistantORM
@@ -64,6 +66,53 @@ def to_pydantic(row: AssistantORM) -> Assistant:
 
     # Pydantic의 내장 ORM 변환 기능 사용 (from_attributes=True)
     return Assistant.model_validate(row, from_attributes=True)
+
+
+def _build_access_filter(
+    user_id: str,
+    org_id: str | None,
+    *,
+    include_system: bool = False,
+) -> ColumnElement[bool]:
+    """멀티테넌트 접근 제어 필터 조건 생성
+
+    사용자가 접근할 수 있는 어시스턴트를 필터링하는 SQLAlchemy 조건을 생성합니다.
+    접근 권한은 다음 규칙에 따릅니다:
+
+    1. 사용자 소유 리소스: user_id가 일치하는 모든 리소스
+    2. 조직 공유 리소스: org_id가 일치하는 모든 리소스 (org_id가 있는 경우)
+    3. 시스템 리소스: include_system=True인 경우 user_id="system" 리소스
+
+    이 함수는 "OR" 패턴을 사용합니다:
+    - 사용자는 자신의 리소스 또는 조직 공유 리소스에 접근 가능
+    - 조직 멤버십은 별도로 검증되어야 함 (OrganizationService 참조)
+
+    Args:
+        user_id: 현재 사용자 식별자
+        org_id: 현재 사용자의 조직 ID (None이면 조직 필터링 안 함)
+        include_system: 시스템 리소스 포함 여부 (기본값: False)
+
+    Returns:
+        ColumnElement[bool]: SQLAlchemy WHERE 조건
+
+    사용 예:
+        # 기본 사용: 사용자 소유 + 조직 공유 리소스
+        stmt = select(AssistantORM).where(_build_access_filter(user_id, org_id))
+
+        # 시스템 리소스 포함 (get 작업 등에서)
+        stmt = select(AssistantORM).where(
+            _build_access_filter(user_id, org_id, include_system=True)
+        )
+    """
+    conditions: list[ColumnElement[bool]] = [AssistantORM.user_id == user_id]
+
+    if org_id is not None:
+        conditions.append(AssistantORM.org_id == org_id)
+
+    if include_system:
+        conditions.append(AssistantORM.user_id == "system")
+
+    return or_(*conditions)
 
 
 def _state_jsonschema(graph: CompiledGraph) -> dict[str, Any] | None:
@@ -221,7 +270,12 @@ class AssistantService:
         self.session: AsyncSession = session
         self.langgraph_service: LangGraphService = langgraph_service
 
-    async def create_assistant(self, request: AssistantCreate, user_identity: str) -> Assistant:
+    async def create_assistant(
+        self,
+        request: AssistantCreate,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> Assistant:
         """새로운 어시스턴트 생성
 
         요청된 그래프를 검증하고 어시스턴트를 생성합니다.
@@ -232,12 +286,13 @@ class AssistantService:
         2. 그래프 로딩 가능 여부 검증
         3. config와 context 동기화 (LangGraph 0.6.0+ context 권장)
         4. 중복 어시스턴트 검사 (user_id, graph_id, config 조합)
-        5. 어시스턴트 레코드 생성
+        5. 어시스턴트 레코드 생성 (org_id 포함)
         6. 버전 1 이력 레코드 생성
 
         Args:
             request (AssistantCreate): 어시스턴트 생성 요청 데이터
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             Assistant: 생성된 어시스턴트
@@ -319,6 +374,7 @@ class AssistantService:
             context=context_dict,
             graph_id=graph_id,
             user_id=user_identity,
+            org_id=org_id,  # 멀티테넌시: 조직 공유 리소스
             metadata_dict=metadata_dict,
             version=1,
         )
@@ -347,25 +403,35 @@ class AssistantService:
 
         return to_pydantic(assistant_orm)
 
-    async def list_assistants(self, user_identity: str) -> list[Assistant]:
+    async def list_assistants(
+        self,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> list[Assistant]:
         """사용자의 모든 어시스턴트 조회
 
-        인증된 사용자가 소유한 모든 어시스턴트를 반환합니다.
-        멀티테넌트 격리를 위해 user_id로 필터링합니다.
+        인증된 사용자가 소유하거나 조직에서 공유된 모든 어시스턴트를 반환합니다.
+        멀티테넌트 격리를 위해 user_id 및 org_id로 필터링합니다.
 
         Args:
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
-            list[Assistant]: 사용자의 어시스턴트 목록
+            list[Assistant]: 사용자의 어시스턴트 목록 (조직 공유 포함)
         """
-        # 사용자 소유 어시스턴트만 필터링
-        stmt = select(AssistantORM).where(AssistantORM.user_id == user_identity)
+        # 사용자 소유 또는 조직 공유 어시스턴트 필터링
+        stmt = select(AssistantORM).where(_build_access_filter(user_identity, org_id))
         result = await self.session.scalars(stmt)
         user_assistants = [to_pydantic(a) for a in result.all()]
         return user_assistants
 
-    async def search_assistants(self, request: AssistantSearchRequest, user_identity: str) -> list[Assistant]:
+    async def search_assistants(
+        self,
+        request: AssistantSearchRequest,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> list[Assistant]:
         """필터를 사용하여 어시스턴트 검색
 
         사용자의 어시스턴트를 name, description, graph_id, metadata 등으로 필터링하고
@@ -380,12 +446,13 @@ class AssistantService:
         Args:
             request (AssistantSearchRequest): 검색 필터 및 페이지네이션 파라미터
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             list[Assistant]: 필터링 및 페이지네이션된 어시스턴트 목록
         """
-        # 사용자의 어시스턴트를 기반으로 시작
-        stmt = select(AssistantORM).where(AssistantORM.user_id == user_identity)
+        # 사용자 소유 또는 조직 공유 어시스턴트를 기반으로 시작
+        stmt = select(AssistantORM).where(_build_access_filter(user_identity, org_id))
 
         # 필터 적용
         if request.name:
@@ -417,7 +484,12 @@ class AssistantService:
 
         return paginated_assistants
 
-    async def count_assistants(self, request: AssistantSearchRequest, user_identity: str) -> int:
+    async def count_assistants(
+        self,
+        request: AssistantSearchRequest,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> int:
         """필터 조건에 맞는 어시스턴트 총 개수 조회
 
         search_assistants()와 동일한 필터를 사용하여 전체 개수를 반환합니다.
@@ -426,11 +498,16 @@ class AssistantService:
         Args:
             request (AssistantSearchRequest): 검색 필터 (offset, limit 제외)
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             int: 필터 조건을 만족하는 어시스턴트 총 개수
         """
-        stmt = select(func.count()).where(AssistantORM.user_id == user_identity)
+        stmt = (
+            select(func.count())
+            .select_from(AssistantORM)
+            .where(_build_access_filter(user_identity, org_id))
+        )
 
         # search_assistants()와 동일한 필터 적용
         if request.name:
@@ -452,15 +529,21 @@ class AssistantService:
         total = await self.session.scalar(stmt)
         return total or 0
 
-    async def get_assistant(self, assistant_id: str, user_identity: str) -> Assistant:
+    async def get_assistant(
+        self,
+        assistant_id: str,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> Assistant:
         """ID로 특정 어시스턴트 조회
 
-        사용자가 소유하거나 시스템이 제공하는 어시스턴트를 조회합니다.
+        사용자가 소유하거나, 조직에서 공유되거나, 시스템이 제공하는 어시스턴트를 조회합니다.
         시스템 어시스턴트는 open_langgraph.json에 정의된 그래프의 기본 어시스턴트입니다.
 
         Args:
             assistant_id (str): 어시스턴트 고유 식별자
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             Assistant: 조회된 어시스턴트
@@ -470,11 +553,7 @@ class AssistantService:
         """
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
-            or_(
-                # 사용자 소유 또는 시스템 제공 어시스턴트
-                AssistantORM.user_id == user_identity,
-                AssistantORM.user_id == "system",
-            ),
+            _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
 
@@ -484,16 +563,24 @@ class AssistantService:
         return to_pydantic(assistant)
 
     async def update_assistant(
-        self, assistant_id: str, request: AssistantUpdate, user_identity: str
+        self,
+        assistant_id: str,
+        request: AssistantUpdate,
+        user_identity: str,
+        org_id: str | None = None,  # noqa: ARG002 - 향후 RBAC용 예약
     ) -> Assistant:
         """어시스턴트 업데이트 및 버전 이력 생성
 
         어시스턴트를 업데이트하고 이전 버전을 assistant_versions 테이블에 보관합니다.
         버전 번호는 자동으로 증가하며, 사용자는 나중에 특정 버전으로 롤백할 수 있습니다.
 
+        Note:
+            현재 업데이트는 어시스턴트 소유자만 가능합니다 (조직 공유 어시스턴트 제외).
+            향후 RBAC 통합 시 조직 역할 기반 권한을 추가할 수 있습니다.
+
         동작 흐름:
         1. config와 context 동기화
-        2. 기존 어시스턴트 조회
+        2. 기존 어시스턴트 조회 (소유자 확인)
         3. 최대 버전 번호 조회 후 +1
         4. 새로운 버전 이력 레코드 생성
         5. 어시스턴트 메인 레코드 업데이트
@@ -502,6 +589,7 @@ class AssistantService:
             assistant_id (str): 어시스턴트 고유 식별자
             request (AssistantUpdate): 업데이트할 필드
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (현재 미사용, 향후 RBAC용)
 
         Returns:
             Assistant: 업데이트된 어시스턴트
@@ -591,15 +679,25 @@ class AssistantService:
 
         return to_pydantic(updated_assistant)
 
-    async def delete_assistant(self, assistant_id: str, user_identity: str) -> dict:
+    async def delete_assistant(
+        self,
+        assistant_id: str,
+        user_identity: str,
+        org_id: str | None = None,  # noqa: ARG002 - 향후 RBAC용 예약
+    ) -> dict:
         """어시스턴트 삭제
 
         어시스턴트를 영구적으로 삭제합니다.
         CASCADE 설정으로 인해 연관된 버전 이력, 실행, 이벤트도 함께 삭제됩니다.
 
+        Note:
+            현재 삭제는 어시스턴트 소유자만 가능합니다 (조직 공유 어시스턴트 제외).
+            향후 RBAC 통합 시 조직 역할 기반 권한을 추가할 수 있습니다.
+
         Args:
             assistant_id (str): 어시스턴트 고유 식별자
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (현재 미사용, 향후 RBAC용)
 
         Returns:
             dict: 삭제 완료 상태 {"status": "deleted"}
@@ -607,6 +705,7 @@ class AssistantService:
         Raises:
             HTTPException(404): 어시스턴트를 찾을 수 없음
         """
+        # 삭제는 소유자만 가능 (조직 공유 어시스턴트 제외)
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
             AssistantORM.user_id == user_identity,
@@ -625,14 +724,23 @@ class AssistantService:
 
         return {"status": "deleted"}
 
-    async def set_assistant_latest(self, assistant_id: str, version: int, user_identity: str) -> Assistant:
+    async def set_assistant_latest(
+        self,
+        assistant_id: str,
+        version: int,
+        user_identity: str,
+        org_id: str | None = None,  # noqa: ARG002 - 향후 RBAC용 예약
+    ) -> Assistant:
         """특정 버전을 최신 버전으로 설정 (롤백)
 
         assistant_versions 테이블에 저장된 과거 버전을 어시스턴트의 최신 버전으로 설정합니다.
         이 기능을 통해 사용자는 이전 설정이나 그래프로 롤백할 수 있습니다.
 
+        Note:
+            현재 롤백은 어시스턴트 소유자만 가능합니다 (조직 공유 어시스턴트 제외).
+
         동작 흐름:
-        1. 어시스턴트 존재 여부 확인
+        1. 어시스턴트 존재 여부 확인 (소유자 확인)
         2. 요청된 버전 존재 여부 확인
         3. 어시스턴트 메인 레코드를 해당 버전의 내용으로 업데이트
 
@@ -640,6 +748,7 @@ class AssistantService:
             assistant_id (str): 어시스턴트 고유 식별자
             version (int): 복원할 버전 번호
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (현재 미사용, 향후 RBAC용)
 
         Returns:
             Assistant: 버전이 복원된 어시스턴트
@@ -647,6 +756,7 @@ class AssistantService:
         Raises:
             HTTPException(404): 어시스턴트 또는 버전을 찾을 수 없음
         """
+        # 롤백은 소유자만 가능
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
             AssistantORM.user_id == user_identity,
@@ -691,7 +801,12 @@ class AssistantService:
             )
         return to_pydantic(updated_assistant)
 
-    async def list_assistant_versions(self, assistant_id: str, user_identity: str) -> list[Assistant]:
+    async def list_assistant_versions(
+        self,
+        assistant_id: str,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> list[Assistant]:
         """어시스턴트의 모든 버전 이력 조회
 
         assistant_versions 테이블에 저장된 모든 버전을 최신순으로 반환합니다.
@@ -700,6 +815,7 @@ class AssistantService:
         Args:
             assistant_id (str): 어시스턴트 고유 식별자
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             list[Assistant]: 버전 목록 (최신순 정렬)
@@ -709,7 +825,7 @@ class AssistantService:
         """
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
-            AssistantORM.user_id == user_identity,
+            _build_access_filter(user_identity, org_id),
         )
         assistant = await self.session.scalar(stmt)
         if not assistant:
@@ -748,7 +864,12 @@ class AssistantService:
 
         return version_list
 
-    async def get_assistant_schemas(self, assistant_id: str, user_identity: str) -> dict:
+    async def get_assistant_schemas(
+        self,
+        assistant_id: str,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> dict:
         """어시스턴트의 그래프 스키마 조회
 
         어시스턴트가 사용하는 LangGraph 그래프의 모든 스키마를 추출하여 반환합니다.
@@ -764,6 +885,7 @@ class AssistantService:
         Args:
             assistant_id (str): 어시스턴트 고유 식별자
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             dict: graph_id와 5가지 스키마를 포함한 딕셔너리
@@ -774,7 +896,7 @@ class AssistantService:
         """
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
-            or_(AssistantORM.user_id == user_identity, AssistantORM.user_id == "system"),
+            _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
 
@@ -794,7 +916,13 @@ class AssistantService:
         except Exception as e:
             raise HTTPException(400, f"Failed to extract schemas: {str(e)}") from e
 
-    async def get_assistant_graph(self, assistant_id: str, xray: bool | int, user_identity: str) -> dict:
+    async def get_assistant_graph(
+        self,
+        assistant_id: str,
+        xray: bool | int,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> dict:
         """그래프 구조 조회 (시각화용)
 
         어시스턴트의 LangGraph 그래프 구조를 JSON 형식으로 반환합니다.
@@ -809,6 +937,7 @@ class AssistantService:
             assistant_id (str): 어시스턴트 고유 식별자
             xray (bool | int): 서브그래프 펼침 옵션
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             dict: 그래프 구조 JSON (nodes, edges 포함)
@@ -820,7 +949,7 @@ class AssistantService:
         """
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
-            or_(AssistantORM.user_id == user_identity, AssistantORM.user_id == "system"),
+            _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
 
@@ -859,6 +988,7 @@ class AssistantService:
         namespace: str | None,
         recurse: bool,
         user_identity: str,
+        org_id: str | None = None,
     ) -> dict:
         """어시스턴트의 서브그래프 조회
 
@@ -870,6 +1000,7 @@ class AssistantService:
             namespace (str | None): 특정 네임스페이스의 서브그래프만 조회 (None이면 전체)
             recurse (bool): 중첩된 서브그래프도 재귀적으로 조회할지 여부
             user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID (멀티테넌시, 선택)
 
         Returns:
             dict: {namespace: schemas} 형태의 서브그래프 스키마 딕셔너리
@@ -881,7 +1012,7 @@ class AssistantService:
         """
         stmt = select(AssistantORM).where(
             AssistantORM.assistant_id == assistant_id,
-            or_(AssistantORM.user_id == user_identity, AssistantORM.user_id == "system"),
+            _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
 

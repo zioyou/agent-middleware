@@ -6,6 +6,9 @@ LangGraph는 자체 체크포인터로 대화 상태를 관리하고,
 
 주요 구성 요소:
 • `Base` - 모든 ORM 모델의 기반 클래스 (declarative base)
+• `Organization` - 조직(테넌트) 정의 (멀티테넌시)
+• `OrganizationMember` - 조직 멤버십 (역할 기반)
+• `APIKey` - 조직별 API 키 관리
 • `Assistant` - 어시스턴트 정의 (그래프 ID, 설정, 사용자 정보)
 • `AssistantVersion` - 어시스턴트 버전 이력 추적
 • `Thread` - 대화 스레드 메타데이터 (상태, 사용자 정보)
@@ -48,6 +51,137 @@ class Base(DeclarativeBase):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Organization Models (Multi-Tenancy)
+# ---------------------------------------------------------------------------
+
+
+class Organization(Base):
+    """조직(테넌트) ORM 모델
+
+    조직은 멀티테넌시의 기본 단위입니다. 사용자는 여러 조직에 속할 수 있으며,
+    각 조직은 독립적인 리소스(Assistant, Thread, Run)를 가집니다.
+
+    주요 필드:
+    - org_id: 고유 식별자 (UUID, DB에서 자동 생성)
+    - name: 조직 이름 (표시용)
+    - slug: URL 친화적 식별자 (자동 생성, 고유)
+    - settings: 조직 설정 (rate limits, quotas 등)
+    - metadata_dict: 추가 메타데이터 (JSONB)
+    """
+
+    __tablename__ = "organization"
+
+    org_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    settings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("idx_organization_slug", "slug", unique=True),
+        Index("idx_organization_created_at", "created_at"),
+    )
+
+
+class OrganizationMember(Base):
+    """조직 멤버십 ORM 모델
+
+    조직과 사용자 간의 멤버십을 관리합니다.
+    각 멤버는 역할(role)을 가지며, RBAC 권한 검사에 사용됩니다.
+
+    역할:
+    - owner: 전체 권한 (조직 삭제 가능)
+    - admin: 멤버/설정 관리
+    - member: 리소스 생성/수정
+    - viewer: 읽기 전용
+
+    복합 고유 키: (org_id, user_id)
+    """
+
+    __tablename__ = "organization_member"
+
+    id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'member'"))
+    invited_by: Mapped[str | None] = mapped_column(Text)
+    joined_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("idx_org_member_org_id", "org_id"),
+        Index("idx_org_member_user_id", "user_id"),
+        Index("idx_org_member_org_user", "org_id", "user_id", unique=True),
+    )
+
+
+class APIKey(Base):
+    """조직별 API 키 ORM 모델
+
+    조직 단위의 API 키를 관리합니다. 키 자체는 해시로 저장되며,
+    생성 시에만 전문이 반환됩니다.
+
+    주요 필드:
+    - key_id: 고유 식별자 (UUID)
+    - org_id: 소속 조직 (FK, CASCADE DELETE)
+    - key_hash: SHA-256 해시 (검증용)
+    - key_prefix: 표시용 접두사 (예: "olg_xxxxx")
+    - scopes: 권한 범위 (예: ["assistants:read", "runs:write"])
+    """
+
+    __tablename__ = "api_key"
+
+    key_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    key_prefix: Mapped[str] = mapped_column(Text, nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    __table_args__ = (
+        Index("idx_api_key_org_id", "org_id"),
+        Index("idx_api_key_hash", "key_hash", unique=True),
+        Index("idx_api_key_prefix", "key_prefix"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Core Agent Protocol Models
+# ---------------------------------------------------------------------------
+
+
 class Assistant(Base):
     """어시스턴트 정의 ORM 모델
 
@@ -62,6 +196,7 @@ class Assistant(Base):
     - context: 그래프 런타임 컨텍스트 (JSONB)
     - version: 버전 번호 (기본값 1)
     - metadata_dict: 추가 메타데이터 (JSONB)
+    - org_id: 소속 조직 (멀티테넌시, nullable for backward compatibility)
     """
 
     __tablename__ = "assistant"
@@ -76,6 +211,10 @@ class Assistant(Base):
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     context: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # 조직 ID - 멀티테넌시 지원 (nullable for backward compatibility)
+    org_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="SET NULL"), nullable=True
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     metadata_dict: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb"), name="metadata"
@@ -87,6 +226,7 @@ class Assistant(Base):
     # - user_id: 사용자별 어시스턴트 조회 최적화
     # - (user_id, assistant_id): 고유성 보장
     # - (user_id, graph_id, config): 동일 설정 중복 방지
+    # - org_id: 조직별 어시스턴트 조회 최적화
     __table_args__ = (
         Index("idx_assistant_user", "user_id"),
         Index("idx_assistant_user_assistant", "user_id", "assistant_id", unique=True),
@@ -97,6 +237,8 @@ class Assistant(Base):
             "config",
             unique=True,
         ),
+        Index("idx_assistant_org_id", "org_id"),
+        Index("idx_assistant_org_user", "org_id", "user_id"),
     )
 
 
@@ -140,11 +282,19 @@ class Thread(Base):
     - busy: 실행 중
     - interrupted: 중단됨 (Human-in-the-Loop)
 
+    TTL (Time-to-Live) 전략:
+    - delete: 만료 시 스레드 삭제
+    - archive: 만료 시 스레드 아카이브 (추후 구현)
+
     주요 필드:
     - thread_id: 고유 식별자 (클라이언트가 생성)
     - status: 현재 상태
     - metadata_json: 어시스턴트/그래프 정보 등 (JSONB)
     - user_id: 소유자 (멀티테넌트 격리)
+    - org_id: 소속 조직 (멀티테넌시, nullable for backward compatibility)
+    - ttl_seconds: TTL 기간 (초)
+    - ttl_strategy: 만료 전략 (delete/archive)
+    - expires_at: 만료 시간
     """
 
     __tablename__ = "thread"
@@ -156,11 +306,30 @@ class Thread(Base):
         "metadata_json", JSONB, server_default=text("'{}'::jsonb")
     )
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # 조직 ID - 멀티테넌시 지원 (nullable for backward compatibility)
+    org_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
-    # 성능 최적화: 사용자별 스레드 조회용 인덱스
-    __table_args__ = (Index("idx_thread_user", "user_id"),)
+    # TTL (Time-to-Live) 필드 - threads.update SDK 호환
+    ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ttl_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)  # 'delete' | 'archive'
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    # 성능 최적화 인덱스
+    __table_args__ = (
+        Index("idx_thread_user", "user_id"),
+        Index("idx_thread_org_id", "org_id"),
+        Index("idx_thread_org_user", "org_id", "user_id"),
+        # TTL 만료 스레드 조회 최적화 (expires_at이 있는 경우만)
+        Index(
+            "idx_thread_expires_at",
+            "expires_at",
+            postgresql_where=text("expires_at IS NOT NULL"),
+        ),
+    )
 
 
 class Run(Base):
@@ -182,6 +351,7 @@ class Run(Base):
     - run_id: 고유 식별자 (UUID, DB 자동 생성)
     - thread_id: 소속 스레드 (FK, CASCADE DELETE)
     - assistant_id: 사용된 어시스턴트 (FK, CASCADE DELETE)
+    - org_id: 소속 조직 (멀티테넌시, nullable for backward compatibility)
     - input: 실행 입력 데이터 (JSONB)
     - output: 실행 결과 (JSONB)
     - config: LangGraph 실행 설정 (JSONB)
@@ -201,6 +371,10 @@ class Run(Base):
     assistant_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("assistant.assistant_id", ondelete="CASCADE")
     )
+    # 조직 ID - 멀티테넌시 지원 (nullable for backward compatibility)
+    org_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
     input: Mapped[dict[str, Any] | None] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     # config 컬럼: 일부 환경에서는 아직 없을 수 있어 nullable 설정
@@ -219,12 +393,15 @@ class Run(Base):
     # - status: 상태별 필터링
     # - assistant_id: 어시스턴트별 실행 조회
     # - created_at: 시간순 정렬 최적화
+    # - org_id: 조직별 실행 조회 최적화
     __table_args__ = (
         Index("idx_runs_thread_id", "thread_id"),
         Index("idx_runs_user", "user_id"),
         Index("idx_runs_status", "status"),
         Index("idx_runs_assistant_id", "assistant_id"),
         Index("idx_runs_created_at", "created_at"),
+        Index("idx_runs_org_id", "org_id"),
+        Index("idx_runs_org_thread", "org_id", "thread_id"),
     )
 
 
