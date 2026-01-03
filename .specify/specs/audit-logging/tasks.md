@@ -1,10 +1,22 @@
 # Audit Logging Tasks
 
+> **Version**: 1.1 (Codex Review Incorporated)
+> **Last Updated**: 2026-01-03
+
 ## Overview
 
 | 총 작업 | 예상 기간 | 병렬 가능 | 순차 필수 |
 |---------|-----------|-----------|-----------|
-| 15개 | 2주 | 6개 | 9개 |
+| 17개 | 2주 | 7개 | 10개 |
+
+## ⚠️ Key Design Changes (Codex Feedback)
+
+| 원래 설계 | 수정된 설계 | 이유 |
+|-----------|-------------|------|
+| asyncio.Queue | Postgres Outbox 테이블 | 프로세스 크래시 시 데이터 손실 방지 |
+| 단일 audit_logs 테이블 | outbox + partitioned 테이블 | 성능 + 신뢰성 |
+| 기본 마스킹 | Schema-aware 마스킹 | 성능 + 정확성 |
+| ADMIN 권한만 | org_id 필터 필수 | 멀티테넌트 격리 |
 
 ## Task Breakdown
 
@@ -15,14 +27,22 @@
 
 ```python
 # 추가할 클래스
+class AuditLogOutbox(Base):
+    """Outbox 테이블 - 즉시 INSERT용"""
+    __tablename__ = "audit_logs_outbox"
+    # ... (plan.md 참조)
+
 class AuditLog(Base):
+    """파티션 테이블 - 배치 이동 대상"""
     __tablename__ = "audit_logs"
     # ... (plan.md 참조)
 ```
 
 **Done Criteria**:
-- [ ] AuditLog 클래스 정의 완료
-- [ ] 복합 인덱스 설정 완료
+- [ ] AuditLogOutbox 클래스 정의 완료
+- [ ] AuditLog 클래스 정의 완료 (error_class, is_streaming 포함)
+- [ ] 파티셔닝 설정 (`postgresql_partition_by`)
+- [ ] 복합 인덱스 설정 (org_id+timestamp, user_id+timestamp)
 - [ ] `models/__init__.py`에 export 추가
 
 **Dependencies**: 없음
@@ -76,15 +96,17 @@ def mask_sensitive_data(data: dict | list | Any) -> Any:
 
 ---
 
-#### Task 2.2: AuditLogService 구현 [순차]
-**File**: `src/agent_server/services/audit_service.py` (새 파일)
+#### Task 2.2: AuditOutboxService 구현 [순차]
+**File**: `src/agent_server/services/audit_outbox_service.py` (새 파일)
 
 **Done Criteria**:
-- [ ] asyncio.Queue 기반 비동기 큐
-- [ ] 배치 쓰기 로직 (100개 또는 5초)
-- [ ] start/stop 라이프사이클 메서드
-- [ ] enqueue 메서드 (논블로킹)
-- [ ] 단위 테스트 5개 이상
+- [ ] `insert()` - 단일 레코드 동기 INSERT (타임아웃 1초)
+- [ ] `start_mover()` - 백그라운드 배치 이동 시작
+- [ ] `stop_mover()` - 남은 레코드 처리 후 종료
+- [ ] `_batch_mover()` - outbox → partitioned 테이블 이동
+- [ ] `with_for_update(skip_locked=True)` 동시성 처리
+- [ ] 메트릭 기록 (audit.moved, audit.mover_errors)
+- [ ] 단위 테스트 8개 이상
 
 **Dependencies**: Task 1.1, Task 1.2
 
@@ -126,13 +148,30 @@ def extract_resource_id(path: str) -> str | None:
 **File**: `src/agent_server/middleware/audit.py` (새 파일)
 
 **Done Criteria**:
-- [ ] EXCLUDED_PATHS 설정 (/health, /docs 등)
-- [ ] 요청 본문 캡처 (StreamingBody 처리)
+- [ ] EXCLUDED_PATHS 설정 (/health, /docs, /metrics 등)
+- [ ] `request.state.audit_ctx` 컨텍스트 저장
+- [ ] 요청 본문 캡처 + 크기 제한 (MAX_BODY_SIZE = 10KB)
 - [ ] 응답 코드 및 소요 시간 측정
-- [ ] 비동기 로그 큐 추가
-- [ ] 단위 테스트 5개 이상
+- [ ] **스트리밍 응답 감지 및 래핑** (`_wrap_streaming_response`)
+- [ ] **예외 발생 시 로깅** (`_log_exception`)
+- [ ] 동기 Outbox INSERT (비동기 큐 대신)
+- [ ] 단위 테스트 8개 이상
 
 **Dependencies**: Task 2.1, Task 2.2, Task 2.3
+
+---
+
+#### Task 3.1b: Streaming Response Handler [순차]
+**File**: `src/agent_server/middleware/audit.py` (계속)
+
+**Done Criteria**:
+- [ ] `_wrap_streaming_response()` 구현
+- [ ] bytes_sent 추적
+- [ ] finally 블록에서 로깅 (스트리밍 중단 포함)
+- [ ] SSE 엔드포인트 테스트 (runs/stream)
+- [ ] 통합 테스트 3개 이상
+
+**Dependencies**: Task 3.1
 
 ---
 
@@ -168,9 +207,11 @@ def extract_resource_id(path: str) -> str | None:
 
 **Done Criteria**:
 - [ ] GET /audit/logs 엔드포인트
-- [ ] 필터링 (user_id, org_id, action, resource_type, time range)
+- [ ] **org_id 필수 필터링** (멀티테넌트 격리)
+- [ ] 필터링 (user_id, action, resource_type, time range)
 - [ ] 페이지네이션 (limit, offset)
-- [ ] ADMIN 권한 체크
+- [ ] `require_role(Role.ADMIN)` 권한 체크
+- [ ] org_id 없으면 403 반환
 
 **Dependencies**: Task 2.2
 
@@ -193,11 +234,27 @@ def extract_resource_id(path: str) -> str | None:
 
 **Done Criteria**:
 - [ ] POST /audit/export 엔드포인트
+- [ ] **`require_role(Role.OWNER)` 권한** (OWNER만 내보내기)
 - [ ] CSV 형식 출력
 - [ ] JSON 형식 출력
 - [ ] StreamingResponse로 대용량 처리
+- [ ] org_id 스코핑 적용
 
 **Dependencies**: Task 4.1
+
+---
+
+#### Task 4.5: PartitionService 구현 [병렬] (NEW)
+**File**: `src/agent_server/services/partition_service.py` (새 파일)
+
+**Done Criteria**:
+- [ ] `ensure_future_partitions(months_ahead=3)` - 향후 파티션 생성
+- [ ] `cleanup_old_partitions(retention_days=90)` - 오래된 파티션 삭제
+- [ ] 마이그레이션 훅 또는 스케줄 작업으로 자동 실행
+- [ ] 파티션 존재 여부 확인 로직
+- [ ] 단위 테스트 5개 이상
+
+**Dependencies**: Task 1.3
 
 ---
 
@@ -218,10 +275,11 @@ def extract_resource_id(path: str) -> str | None:
 **Files**: `tests/unit/test_audit_*.py`
 
 **Done Criteria**:
-- [ ] 마스킹 테스트 15개+
-- [ ] 서비스 테스트 10개+
-- [ ] 헬퍼 테스트 15개+
-- [ ] 총 40개 이상 단위 테스트
+- [ ] 마스킹 테스트 15개+ (schema-aware, 깊이 제한, 크기 제한)
+- [ ] OutboxService 테스트 10개+ (insert, mover, skip_locked)
+- [ ] 헬퍼 테스트 15개+ (액션 추론, 리소스 추론)
+- [ ] PartitionService 테스트 5개+
+- [ ] 총 45개 이상 단위 테스트
 
 **Dependencies**: Phase 1-4 완료
 
@@ -231,10 +289,13 @@ def extract_resource_id(path: str) -> str | None:
 **File**: `tests/e2e/test_audit_e2e.py` (새 파일)
 
 **Done Criteria**:
-- [ ] 전체 흐름 테스트 (요청 → 로그 → 조회)
-- [ ] 권한 테스트 (ADMIN만 접근)
-- [ ] 성능 테스트 (1000건 배치)
-- [ ] 5개 이상 E2E 테스트
+- [ ] 전체 흐름 테스트 (요청 → Outbox → 파티션 → 조회)
+- [ ] 권한 테스트 (ADMIN 조회, OWNER 내보내기)
+- [ ] **org_id 스코핑 테스트** (다른 조직 로그 접근 불가)
+- [ ] **스트리밍 엔드포인트 로깅 테스트** (runs/stream)
+- [ ] 성능 테스트 (1000건 배치 이동)
+- [ ] 예외 발생 시 로깅 테스트
+- [ ] 8개 이상 E2E 테스트
 
 **Dependencies**: Phase 1-4 완료
 
