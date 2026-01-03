@@ -17,8 +17,18 @@ from agent_server.services.assistant_service import AssistantService, to_pydanti
 
 @pytest.fixture
 def mock_session():
-    """Mock AsyncSession for testing"""
-    return AsyncMock()
+    """Mock AsyncSession for testing
+
+    AsyncSession의 동기/비동기 메서드를 올바르게 모킹합니다:
+    - add(), delete(): 동기 메서드 → Mock()
+    - commit(), refresh(), scalar(), scalars(), execute(): 비동기 메서드 → AsyncMock()
+    """
+    session = AsyncMock()
+    # 동기 메서드는 명시적으로 Mock()으로 설정
+    # (AsyncMock의 기본 동작은 모든 속성을 AsyncMock으로 반환하여 코루틴 미대기 경고 발생)
+    session.add = Mock()
+    session.delete = Mock()
+    return session
 
 
 @pytest.fixture

@@ -108,10 +108,15 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_check_database_connection_error(self):
         """데이터베이스 연결 오류 시 unhealthy 반환"""
-        mock_engine = MagicMock()
+        # engine.begin()은 동기 메서드이지만 async context manager를 반환
         mock_conn = AsyncMock()
-        mock_engine.begin = AsyncMock(return_value=mock_conn)
-        mock_conn.__aenter__ = AsyncMock(side_effect=OperationalError("Connection failed", None, None))
+        mock_conn.__aenter__ = AsyncMock(
+            side_effect=OperationalError("Connection failed", None, None)
+        )
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+
+        mock_engine = MagicMock()
+        mock_engine.begin.return_value = mock_conn  # 동기 호출 → async ctx mgr 반환
 
         with patch("src.agent_server.core.database.db_manager") as mock_db:
             mock_db.engine = mock_engine
@@ -126,16 +131,20 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_check_checkpointer_error(self):
         """Checkpointer 오류 시 unhealthy 반환"""
-        mock_engine = MagicMock()
+        # 올바른 async context manager 모킹 패턴
         mock_conn = AsyncMock()
-        mock_engine.begin = AsyncMock(return_value=mock_conn)
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=None)
         mock_conn.execute = AsyncMock()
 
+        mock_engine = MagicMock()
+        mock_engine.begin.return_value = mock_conn  # 동기 호출 → async ctx mgr 반환
+
         with patch("src.agent_server.core.database.db_manager") as mock_db:
             mock_db.engine = mock_engine
-            mock_db.get_checkpointer = AsyncMock(side_effect=Exception("Checkpointer failed"))
+            mock_db.get_checkpointer = AsyncMock(
+                side_effect=Exception("Checkpointer failed")
+            )
             mock_db.get_store = AsyncMock()
 
             with pytest.raises(HTTPException) as exc_info:
@@ -146,12 +155,14 @@ class TestHealthEndpoint:
     @pytest.mark.asyncio
     async def test_health_check_store_error(self):
         """Store 오류 시 unhealthy 반환"""
-        mock_engine = MagicMock()
+        # 올바른 async context manager 모킹 패턴
         mock_conn = AsyncMock()
-        mock_engine.begin = AsyncMock(return_value=mock_conn)
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=None)
         mock_conn.execute = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.begin.return_value = mock_conn  # 동기 호출 → async ctx mgr 반환
 
         mock_checkpointer = AsyncMock()
         mock_checkpointer.aget_tuple = AsyncMock(return_value=None)
@@ -214,10 +225,15 @@ class TestReadinessEndpoint:
     @pytest.mark.asyncio
     async def test_readiness_check_database_error(self):
         """데이터베이스 쿼리 실패 시 503 반환"""
-        mock_engine = MagicMock()
+        # engine.begin()은 동기 메서드이지만 async context manager를 반환
         mock_conn = AsyncMock()
-        mock_engine.begin = AsyncMock(return_value=mock_conn)
-        mock_conn.__aenter__ = AsyncMock(side_effect=OperationalError("DB error", None, None))
+        mock_conn.__aenter__ = AsyncMock(
+            side_effect=OperationalError("DB error", None, None)
+        )
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+
+        mock_engine = MagicMock()
+        mock_engine.begin.return_value = mock_conn  # 동기 호출 → async ctx mgr 반환
 
         with patch("src.agent_server.core.database.db_manager") as mock_db:
             mock_db.engine = mock_engine
