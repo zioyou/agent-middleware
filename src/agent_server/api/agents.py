@@ -8,6 +8,10 @@
 • 응답에 capabilities 맵 추가 (streaming, checkpoints, store 등)
 • Assistant 모델 → Agent 모델 (capabilities 필드 추가)
 
+A2A Ecosystem 확장:
+• POST /agents/discover - A2A 에이전트 검색 (skills, tags, capabilities 필터)
+• AgentRegistryService를 통한 중앙 레지스트리 통합
+
 하위 호환성:
 • 기존 /assistants/* 엔드포인트는 변경 없이 유지
 • /agents/*는 병렬로 추가된 새 경로
@@ -23,6 +27,7 @@
     # POST /agents - 에이전트 생성
     # GET /agents - 에이전트 목록 조회
     # POST /agents/search - 에이전트 검색
+    # POST /agents/discover - A2A 에이전트 검색 (NEW)
     # GET /agents/{agent_id} - 특정 에이전트 조회
     # GET /agents/{agent_id}/schemas - 그래프 스키마 조회
 """
@@ -35,11 +40,18 @@ from ..core.auth_deps import get_current_user
 from ..models import (
     Agent,
     AgentCapabilities,
+    AgentDiscoverRequest,
+    AgentDiscoverResponse,
     AgentList,
     AgentSchemas,
     AssistantCreate,
     AssistantSearchRequest,
+    DiscoveredAgent,
     User,
+)
+from ..services.agent_registry_service import (
+    AgentSearchFilters,
+    agent_registry_service,
 )
 from ..services.assistant_service import AssistantService, get_assistant_service
 
@@ -137,6 +149,104 @@ async def search_agents(
     """
     assistants = await service.search_assistants(request, user.identity)
     return [_assistant_to_agent(a) for a in assistants]
+
+
+@router.post("/discover", response_model=AgentDiscoverResponse)
+async def discover_agents(
+    request: AgentDiscoverRequest,
+    user: User = Depends(get_current_user),  # noqa: ARG001
+) -> AgentDiscoverResponse:
+    """A2A 에이전트 검색 (Agent Registry 기반)
+
+    등록된 A2A 호환 에이전트를 skills, tags, capabilities로 검색합니다.
+    이 엔드포인트는 Agent Protocol 에이전트가 아닌 A2A 프로토콜 에이전트를 검색합니다.
+
+    검색 로직:
+    - skills: OR 매칭 (하나라도 일치하면 포함)
+    - tags: OR 매칭 (하나라도 일치하면 포함)
+    - capabilities: AND 매칭 (모두 일치해야 포함)
+    - name_contains: 부분 문자열 매칭
+    - healthy_only: 건강한 에이전트만 필터링 (기본값: True)
+
+    Args:
+        request (AgentDiscoverRequest): 검색 필터
+            - skills: 스킬 ID 또는 이름 목록 (OR 매칭)
+            - tags: 태그 목록 (OR 매칭)
+            - capabilities: 능력 필터 (AND 매칭)
+            - name_contains: 이름 부분 매칭
+            - healthy_only: 건강한 에이전트만 (기본값: True)
+        user (User): 인증된 사용자 (의존성 주입)
+
+    Returns:
+        AgentDiscoverResponse: 검색 결과
+            - agents: 검색된 에이전트 목록
+            - total: 전체 개수
+
+    Example Request:
+        POST /agents/discover
+        {
+            "skills": ["recipe-search", "cooking"],
+            "capabilities": {"streaming": true},
+            "healthy_only": true
+        }
+
+    Example Response:
+        {
+            "agents": [
+                {
+                    "graph_id": "recipe_agent",
+                    "name": "Recipe Agent",
+                    "description": "Agent that helps with recipes",
+                    "url": "http://localhost:8000/a2a/recipe_agent",
+                    "skills": [{"id": "recipe-search", "name": "Recipe Search", ...}],
+                    "tags": ["cooking", "recipes"],
+                    "capabilities": {"streaming": true, ...},
+                    "is_healthy": true,
+                    "agent_card_url": "http://localhost:8000/a2a/recipe_agent/.well-known/agent-card.json"
+                }
+            ],
+            "total": 1
+        }
+    """
+    # 검색 필터 변환
+    filters = AgentSearchFilters(
+        skills=request.skills,
+        tags=request.tags,
+        capabilities=request.capabilities,
+        name_contains=request.name_contains,
+        healthy_only=request.healthy_only,
+    )
+
+    # 레지스트리에서 검색
+    results = await agent_registry_service.discover_agents(filters)
+
+    # 응답 변환
+    discovered_agents = []
+    for agent in results:
+        card = agent.agent_card
+        discovered_agents.append(
+            DiscoveredAgent(
+                graph_id=agent.graph_id,
+                name=card.name,
+                description=card.description,
+                url=card.url,
+                version=card.version,
+                skills=[
+                    {"id": s.id, "name": s.name, "description": s.description, "tags": s.tags}
+                    for s in card.skills
+                ],
+                tags=agent.tags,
+                capabilities=card.capabilities.model_dump(exclude_none=True),
+                is_healthy=agent.is_healthy,
+                registered_at=agent.registered_at,
+                agent_card_url=f"{card.url}/.well-known/agent-card.json",
+            )
+        )
+
+    return AgentDiscoverResponse(
+        agents=discovered_agents,
+        total=len(discovered_agents),
+    )
 
 
 @router.get("/{agent_id}", response_model=Agent)
