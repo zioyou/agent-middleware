@@ -69,6 +69,9 @@ class Thread(BaseModel):
         user_id: 스레드 소유자의 사용자 ID
             - 멀티테넌시 격리를 위해 사용
         created_at: 스레드 생성 타임스탬프
+        ttl_seconds: TTL 기간 (초) - threads.update SDK 호환
+        ttl_strategy: 만료 전략 ('delete' | 'archive')
+        expires_at: 만료 예정 시간
 
     참고:
         - ORM 모델 ThreadMetadata와 from_attributes=True로 자동 변환
@@ -82,6 +85,11 @@ class Thread(BaseModel):
     )
     user_id: str  # 스레드 소유 사용자 ID
     created_at: datetime  # 생성 타임스탬프
+
+    # TTL fields (threads.update SDK 호환)
+    ttl_seconds: int | None = Field(None, description="TTL 기간 (초)")
+    ttl_strategy: str | None = Field(None, description="만료 전략 (delete/archive)")
+    expires_at: datetime | None = Field(None, description="만료 예정 시간")
 
     model_config = ConfigDict(from_attributes=True)  # ORM 모델에서 자동 변환 허용
 
@@ -307,6 +315,64 @@ class ThreadHistoryRequest(BaseModel):
     )
     subgraphs: bool | None = Field(False, description="서브그래프 상태 포함 여부 (기본: False)")
     checkpoint_ns: str | None = Field(None, description="체크포인트 네임스페이스 (특정 네임스페이스만 조회)")
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: Thread Update 모델 (threads.update SDK 호환)
+# ---------------------------------------------------------------------------
+
+
+class ThreadUpdateRequest(BaseModel):
+    """스레드 업데이트 요청 모델 (LangGraph SDK threads.update 호환)
+
+    기존 스레드의 메타데이터 및 TTL을 업데이트할 때 사용합니다.
+    PATCH /threads/{thread_id} 엔드포인트에서 사용됩니다.
+
+    주요 기능:
+    - 메타데이터 병합 (기존 메타데이터에 새 값 추가/덮어쓰기)
+    - TTL 설정으로 스레드 자동 만료 지원
+    - delete/archive 전략 선택 가능
+
+    필드 설명:
+        metadata: 병합할 메타데이터 (선택)
+            - 기존 메타데이터에 새 키-값 추가
+            - 기존 키가 있으면 값 덮어쓰기
+            - None이면 메타데이터 변경 없음
+        ttl: TTL 설정 (선택)
+            - int: 초 단위 TTL (기본 전략: delete)
+            - dict: {"seconds": N, "strategy": "delete"|"archive"}
+            - None이면 TTL 변경 없음
+
+    사용 예:
+        # 메타데이터만 업데이트
+        request = ThreadUpdateRequest(
+            metadata={"topic": "weather", "priority": "high"}
+        )
+
+        # TTL 설정 (24시간 후 삭제)
+        request = ThreadUpdateRequest(
+            ttl=86400
+        )
+
+        # TTL + 전략 설정 (1시간 후 아카이브)
+        request = ThreadUpdateRequest(
+            metadata={"archived_reason": "inactive"},
+            ttl={"seconds": 3600, "strategy": "archive"}
+        )
+
+    참고:
+        - 메타데이터 병합은 얕은 병합 (shallow merge)
+        - TTL이 설정되면 expires_at이 자동 계산됨
+        - TTL이 0이면 즉시 만료 (다음 정리 시 삭제)
+    """
+
+    metadata: dict[str, Any] | None = Field(
+        None, description="병합할 메타데이터 (기존 메타데이터에 추가/덮어쓰기)"
+    )
+    ttl: int | dict[str, Any] | None = Field(
+        None,
+        description="TTL 설정: int(초) 또는 dict({'seconds': N, 'strategy': 'delete'|'archive'})",
+    )
 
 
 # ---------------------------------------------------------------------------

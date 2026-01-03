@@ -14,6 +14,7 @@
 • POST   /threads - 새 스레드 생성
 • GET    /threads - 사용자의 스레드 목록 조회
 • GET    /threads/{thread_id} - 특정 스레드 조회
+• PATCH  /threads/{thread_id} - 스레드 업데이트 (메타데이터/TTL, SDK threads.update 호환)
 • DELETE /threads/{thread_id} - 스레드 삭제 (활성 실행 자동 취소)
 • POST   /threads/search - 메타데이터 기반 검색
 • GET    /threads/{thread_id}/state/{checkpoint_id} - 체크포인트 상태 조회
@@ -45,13 +46,13 @@ import asyncio
 import contextlib
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_core.runnables import RunnableConfig
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.runs import active_runs
@@ -68,6 +69,7 @@ from ..models import (
     ThreadList,
     ThreadSearchRequest,
     ThreadState,
+    ThreadUpdateRequest,
     User,
 )
 from ..services.streaming_service import streaming_service
@@ -84,6 +86,36 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 thread_state_service = ThreadStateService()
+
+
+def _build_thread_access_filter(
+    user_id: str,
+    org_id: str | None,
+) -> ColumnElement[bool]:
+    """스레드에 대한 멀티테넌트 접근 제어 필터 조건 생성
+
+    사용자가 접근할 수 있는 스레드를 필터링하는 SQLAlchemy 조건을 생성합니다.
+    접근 권한은 다음 규칙에 따릅니다:
+
+    1. 사용자 소유 리소스: user_id가 일치하는 모든 스레드
+    2. 조직 공유 리소스: org_id가 일치하는 모든 스레드 (org_id가 있는 경우)
+
+    이 함수는 "OR" 패턴을 사용합니다:
+    - 사용자는 자신의 스레드 또는 조직 공유 스레드에 접근 가능
+
+    Args:
+        user_id: 현재 사용자 식별자
+        org_id: 현재 사용자의 조직 ID (None이면 조직 필터링 안 함)
+
+    Returns:
+        ColumnElement[bool]: SQLAlchemy WHERE 조건
+    """
+    conditions: list[ColumnElement[bool]] = [ThreadORM.user_id == user_id]
+
+    if org_id is not None:
+        conditions.append(ThreadORM.org_id == org_id)
+
+    return or_(*conditions)
 
 
 # 인메모리 저장소 제거됨; ORM을 통한 데이터베이스 사용
@@ -141,6 +173,7 @@ async def create_thread(
         status="idle",
         metadata_json=metadata,
         user_id=user.identity,
+        org_id=user.org_id,  # 멀티테넌시: 조직 공유 리소스
     )
     # SQLAlchemy AsyncSession.add는 동기 메서드이므로 await 불필요
     session.add(thread_orm)
@@ -194,8 +227,8 @@ async def list_threads(
 ) -> ThreadList:
     """사용자의 스레드 목록 조회
 
-    인증된 사용자가 소유한 모든 스레드를 반환합니다.
-    멀티테넌트 환경에서 자동으로 사용자별 격리를 수행합니다.
+    인증된 사용자가 소유하거나 조직에서 공유된 모든 스레드를 반환합니다.
+    멀티테넌트 환경에서 자동으로 사용자/조직별 격리를 수행합니다.
 
     Args:
         user (User): 인증된 사용자 (자동 주입)
@@ -210,7 +243,7 @@ async def list_threads(
         - 페이지네이션은 아직 지원하지 않으며 모든 스레드를 반환합니다
         - 향후 limit/offset 파라미터 추가 예정
     """
-    stmt = select(ThreadORM).where(ThreadORM.user_id == user.identity)
+    stmt = select(ThreadORM).where(_build_thread_access_filter(user.identity, user.org_id))
     result = await session.scalars(stmt)
     rows = result.all()
     user_threads = [
@@ -233,8 +266,8 @@ async def get_thread(
 ) -> Thread:
     """ID로 특정 스레드 조회
 
-    인증된 사용자가 소유한 스레드만 조회할 수 있습니다.
-    다른 사용자의 스레드 접근 시 404 오류를 반환합니다.
+    인증된 사용자가 소유하거나 조직에서 공유된 스레드만 조회할 수 있습니다.
+    권한이 없는 스레드 접근 시 404 오류를 반환합니다.
 
     Args:
         thread_id (str): 조회할 스레드 고유 식별자
@@ -247,7 +280,10 @@ async def get_thread(
     Raises:
         HTTPException 404: 스레드를 찾을 수 없거나 권한이 없는 경우
     """
-    stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id, ThreadORM.user_id == user.identity)
+    stmt = select(ThreadORM).where(
+        ThreadORM.thread_id == thread_id,
+        _build_thread_access_filter(user.identity, user.org_id),
+    )
     thread = await session.scalar(stmt)
     if not thread:
         raise HTTPException(404, f"Thread '{thread_id}' not found")
@@ -305,8 +341,11 @@ async def get_thread_state_at_checkpoint(
         - 체크포인트는 LangGraph가 각 노드 실행 후 자동으로 생성합니다
     """
     try:
-        # 스레드 존재 여부 및 사용자 소유권 확인
-        stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id, ThreadORM.user_id == user.identity)
+        # 스레드 존재 여부 및 접근 권한 확인 (소유자 또는 조직 멤버)
+        stmt = select(ThreadORM).where(
+            ThreadORM.thread_id == thread_id,
+            _build_thread_access_filter(user.identity, user.org_id),
+        )
         thread = await session.scalar(stmt)
         if not thread:
             raise HTTPException(404, f"Thread '{thread_id}' not found")
@@ -499,8 +538,11 @@ async def get_thread_history_post(
             f"history POST: thread_id={thread_id} limit={limit} before={before} subgraphs={subgraphs} checkpoint_ns={checkpoint_ns}"
         )
 
-        # 스레드 존재 여부 및 사용자 소유권 확인
-        stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id, ThreadORM.user_id == user.identity)
+        # 스레드 존재 여부 및 접근 권한 확인 (소유자 또는 조직 멤버)
+        stmt = select(ThreadORM).where(
+            ThreadORM.thread_id == thread_id,
+            _build_thread_access_filter(user.identity, user.org_id),
+        )
         thread = await session.scalar(stmt)
         if not thread:
             raise HTTPException(404, f"Thread '{thread_id}' not found")
@@ -727,7 +769,7 @@ async def search_threads(
     페이지네이션을 통해 대량의 스레드를 효율적으로 조회할 수 있습니다.
 
     동작 흐름:
-    1. 사용자 소유 스레드로 기본 필터 적용
+    1. 사용자 소유 또는 조직 공유 스레드로 기본 필터 적용
     2. status 필터 적용 (제공된 경우)
     3. metadata JSONB 필터 적용 (각 key/value 쌍에 대해)
     4. 페이지네이션 적용 (offset, limit)
@@ -767,10 +809,10 @@ async def search_threads(
     참고:
         - 메타데이터는 PostgreSQL JSONB 연산자를 사용하여 검색됩니다
         - 모든 메타데이터 조건은 AND로 결합됩니다
-        - 사용자별 자동 격리가 적용됩니다
+        - 사용자/조직별 자동 격리가 적용됩니다
     """
 
-    stmt = select(ThreadORM).where(ThreadORM.user_id == user.identity)
+    stmt = select(ThreadORM).where(_build_thread_access_filter(user.identity, user.org_id))
 
     if request.status:
         stmt = stmt.where(ThreadORM.status == request.status)
@@ -799,6 +841,132 @@ async def search_threads(
 
     # 클라이언트/벤더 호환성을 위해 스레드 배열 반환
     return threads_models
+
+
+# ---------------------------------------------------------------------------
+# Agent Protocol v0.2.0: Thread Update 엔드포인트 (SDK threads.update 호환)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/threads/{thread_id}", response_model=Thread)
+async def update_thread(
+    thread_id: str,
+    request: ThreadUpdateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Thread:
+    """스레드 업데이트 (LangGraph SDK threads.update 호환)
+
+    스레드의 메타데이터 및 TTL(Time-to-Live)을 업데이트합니다.
+    메타데이터는 기존 값에 병합(merge)되며, TTL 설정 시 만료 시간이 자동 계산됩니다.
+
+    주요 기능:
+    - 메타데이터 병합: 기존 메타데이터에 새 키-값 추가/덮어쓰기
+    - TTL 관리: 초 단위 TTL 또는 전략(delete/archive) 포함 설정
+    - 자동 만료 시간 계산: expires_at 필드에 만료 시각 저장
+
+    동작 흐름:
+    1. 스레드 존재 및 소유권 확인
+    2. 메타데이터 병합 (request.metadata가 제공된 경우)
+    3. TTL 처리 (request.ttl이 제공된 경우)
+       - int: 초 단위, 기본 전략 'delete'
+       - dict: {"seconds": N, "strategy": "delete"|"archive"}
+    4. updated_at 타임스탬프 갱신
+    5. 변경사항 커밋 및 응답 반환
+
+    Args:
+        thread_id (str): 업데이트할 스레드 고유 식별자
+        request (ThreadUpdateRequest): 업데이트 요청
+            - metadata: 병합할 메타데이터 (선택)
+            - ttl: TTL 설정 (선택)
+        user (User): 인증된 사용자 (자동 주입)
+        session (AsyncSession): 비동기 DB 세션 (자동 주입)
+
+    Returns:
+        Thread: 업데이트된 스레드 (TTL 필드 포함)
+
+    Raises:
+        HTTPException 404: 스레드를 찾을 수 없거나 권한이 없는 경우
+        HTTPException 400: 잘못된 TTL 형식
+
+    사용 예:
+        # 메타데이터 업데이트
+        PATCH /threads/{thread_id}
+        {"metadata": {"topic": "weather", "priority": "high"}}
+
+        # TTL 설정 (24시간 후 삭제)
+        PATCH /threads/{thread_id}
+        {"ttl": 86400}
+
+        # TTL + 전략 설정 (1시간 후 아카이브)
+        PATCH /threads/{thread_id}
+        {
+            "metadata": {"archived_reason": "inactive"},
+            "ttl": {"seconds": 3600, "strategy": "archive"}
+        }
+
+    참고:
+        - 메타데이터 병합은 얕은 병합(shallow merge)
+        - TTL이 0이면 즉시 만료 대상 (다음 정리 시 처리)
+        - expires_at은 서버 시간 기준으로 계산됨
+    """
+    # 1. 스레드 존재 및 소유권 확인
+    stmt = select(ThreadORM).where(
+        ThreadORM.thread_id == thread_id,
+        ThreadORM.user_id == user.identity,
+    )
+    thread = await session.scalar(stmt)
+    if not thread:
+        raise HTTPException(404, f"Thread '{thread_id}' not found")
+
+    # 2. 메타데이터 병합 (기존 메타데이터에 새 값 추가/덮어쓰기)
+    if request.metadata is not None:
+        existing_metadata = thread.metadata_json or {}
+        existing_metadata.update(request.metadata)
+        thread.metadata_json = existing_metadata
+
+    # 3. TTL 처리
+    if request.ttl is not None:
+        if isinstance(request.ttl, int):
+            # 정수: 초 단위 TTL, 기본 전략 'delete'
+            thread.ttl_seconds = request.ttl
+            thread.ttl_strategy = "delete"
+            thread.expires_at = datetime.now(UTC) + timedelta(seconds=request.ttl)
+        elif isinstance(request.ttl, dict):
+            # 딕셔너리: {"seconds": N, "strategy": "delete"|"archive"}
+            ttl_seconds = request.ttl.get("seconds")
+            ttl_strategy = request.ttl.get("strategy", "delete")
+
+            if ttl_seconds is None or not isinstance(ttl_seconds, int):
+                raise HTTPException(400, "TTL dict must contain 'seconds' as an integer")
+
+            if ttl_strategy not in ("delete", "archive"):
+                raise HTTPException(400, "TTL strategy must be 'delete' or 'archive'")
+
+            thread.ttl_seconds = ttl_seconds
+            thread.ttl_strategy = ttl_strategy
+            thread.expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+        else:
+            raise HTTPException(400, "TTL must be an integer (seconds) or dict with 'seconds' and 'strategy'")
+
+    # 4. updated_at 갱신
+    thread.updated_at = datetime.now(UTC)
+
+    # 5. 커밋 및 응답
+    await session.commit()
+    await session.refresh(thread)
+
+    logger.info(
+        f"Updated thread {thread_id}: metadata={'updated' if request.metadata else 'unchanged'}, "
+        f"ttl={request.ttl if request.ttl else 'unchanged'}"
+    )
+
+    return Thread.model_validate(
+        {
+            **{c.name: getattr(thread, c.name) for c in thread.__table__.columns},
+            "metadata": thread.metadata_json,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -863,11 +1031,11 @@ async def copy_thread(
         - 복사된 스레드는 독립적으로 동작
         - HITL 워크플로우에서 브랜칭에 유용
     """
-    # 1. 소스 스레드 조회
+    # 1. 소스 스레드 조회 (소유자 또는 조직 멤버)
     source_thread = await session.scalar(
         select(ThreadORM).where(
             ThreadORM.thread_id == thread_id,
-            ThreadORM.user_id == user.identity,
+            _build_thread_access_filter(user.identity, user.org_id),
         )
     )
     if not source_thread:
@@ -923,6 +1091,7 @@ async def copy_thread(
         status="idle",
         metadata_json=final_metadata,
         user_id=user.identity,
+        org_id=user.org_id,  # 멀티테넌시: 조직 공유 리소스
         created_at=now,
         updated_at=now,
     )

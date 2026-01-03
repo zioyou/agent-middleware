@@ -11,13 +11,24 @@ from tests.fixtures.test_helpers import DummyRun, DummyThread
 
 
 def _thread_row(
-    thread_id="test-thread-123", status="idle", metadata=None, user_id="test-user"
+    thread_id="test-thread-123",
+    status="idle",
+    metadata=None,
+    user_id="test-user",
+    ttl_seconds=None,
+    ttl_strategy=None,
+    expires_at=None,
 ):
     """Create a mock thread ORM object"""
     thread = DummyThread(thread_id, status, metadata, user_id)
 
     # Add ORM-specific attributes
     thread.metadata_json = metadata or {}
+
+    # TTL fields (threads.update SDK support)
+    thread.ttl_seconds = ttl_seconds
+    thread.ttl_strategy = ttl_strategy
+    thread.expires_at = expires_at
 
     class _Col:
         def __init__(self, name):
@@ -31,6 +42,9 @@ def _thread_row(
             _Col("user_id"),
             _Col("created_at"),
             _Col("updated_at"),
+            _Col("ttl_seconds"),
+            _Col("ttl_strategy"),
+            _Col("expires_at"),
         ]
 
     thread.__table__ = _T()
@@ -401,3 +415,216 @@ class TestThreadStateCheckpointPost:
             json={"checkpoint": {"checkpoint_id": "cp-1"}, "subgraphs": True},
         )
         assert resp.status_code == 404
+
+
+class TestUpdateThread:
+    """Test PATCH /threads/{thread_id} endpoint (threads.update SDK compatibility)"""
+
+    def test_update_thread_not_found(self):
+        """Test updating a non-existent thread returns 404"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return None
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/nonexistent",
+            json={"metadata": {"key": "value"}},
+        )
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"]
+
+    def test_update_thread_metadata_only(self):
+        """Test updating thread metadata without TTL"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={"existing": "value"})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                pass
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={"metadata": {"new_key": "new_value", "topic": "weather"}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["thread_id"] == "test-123"
+        # Metadata should be merged
+        assert data["metadata"]["existing"] == "value"
+        assert data["metadata"]["new_key"] == "new_value"
+        assert data["metadata"]["topic"] == "weather"
+
+    def test_update_thread_ttl_int(self):
+        """Test updating thread with TTL as integer (seconds)"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={"purpose": "testing"})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                pass
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={"ttl": 3600},  # 1 hour
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["thread_id"] == "test-123"
+        assert data["ttl_seconds"] == 3600
+        assert data["ttl_strategy"] == "delete"
+        assert data["expires_at"] is not None
+
+    def test_update_thread_ttl_dict(self):
+        """Test updating thread with TTL as dict (seconds + strategy)"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                pass
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={"ttl": {"seconds": 7200, "strategy": "archive"}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ttl_seconds"] == 7200
+        assert data["ttl_strategy"] == "archive"
+        assert data["expires_at"] is not None
+
+    def test_update_thread_metadata_and_ttl(self):
+        """Test updating both metadata and TTL together"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={"original": "data"})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                pass
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={
+                "metadata": {"status": "archived", "reason": "inactive"},
+                "ttl": {"seconds": 86400, "strategy": "delete"},
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Metadata merged
+        assert data["metadata"]["original"] == "data"
+        assert data["metadata"]["status"] == "archived"
+        assert data["metadata"]["reason"] == "inactive"
+        # TTL set
+        assert data["ttl_seconds"] == 86400
+        assert data["ttl_strategy"] == "delete"
+
+    def test_update_thread_invalid_ttl_dict(self):
+        """Test updating thread with invalid TTL dict (missing seconds)"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={"ttl": {"strategy": "delete"}},  # Missing 'seconds'
+        )
+        assert resp.status_code == 400
+        assert "seconds" in resp.json()["detail"]
+
+    def test_update_thread_invalid_ttl_strategy(self):
+        """Test updating thread with invalid TTL strategy"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch(
+            "/threads/test-123",
+            json={"ttl": {"seconds": 3600, "strategy": "invalid_strategy"}},
+        )
+        assert resp.status_code == 400
+        assert "strategy" in resp.json()["detail"]
+
+    def test_update_thread_empty_request(self):
+        """Test updating thread with empty request (no changes)"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        thread = _thread_row("test-123", metadata={"unchanged": "value"})
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return thread
+
+            async def commit(self):
+                pass
+
+            async def refresh(self, obj):
+                pass
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.patch("/threads/test-123", json={})
+        assert resp.status_code == 200
+        data = resp.json()
+        # Metadata should remain unchanged
+        assert data["metadata"]["unchanged"] == "value"
