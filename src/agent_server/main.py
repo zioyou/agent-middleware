@@ -16,6 +16,7 @@ LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준
    ├─ /threads: 대화 스레드 관리
    ├─ /runs: 에이전트 실행 및 스트리밍
    ├─ /store: LangGraph Store 장기 메모리
+   ├─ /organizations: 조직 멀티테넌시 관리 (RBAC 포함)
    └─ /a2a: A2A (Agent-to-Agent) Protocol 통신
 
 3. 라이프사이클 관리:
@@ -72,6 +73,7 @@ from starlette.middleware.authentication import AuthenticationMiddleware
 from .a2a.router import router as a2a_router
 from .api.agents import router as agents_router
 from .api.assistants import router as assistants_router
+from .api.organizations import router as organizations_router
 from .api.runs import router as runs_router
 from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
@@ -167,6 +169,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await event_store.start_cleanup_task()
 
+    # TTL 만료 스레드 정리 작업 시작
+    # 1시간마다 expires_at이 지난 스레드를 삭제/아카이브
+    from .services.thread_cleanup_service import thread_cleanup_service
+
+    await thread_cleanup_service.start()
+
     yield
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -181,6 +189,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # 이벤트 저장소 정리 작업 중지
     await event_store.stop_cleanup_task()
+
+    # TTL 스레드 정리 작업 중지
+    await thread_cleanup_service.stop()
 
     # Redis 캐시 연결 종료
     await cache_manager.close()
@@ -262,6 +273,11 @@ app.include_router(runs_standalone_router, prefix="", tags=["Runs (Standalone)"]
 # 사용자별, 스레드별 영구 데이터 저장소 (JSONB)
 # Agent Protocol v0.2.0: /store/namespaces 엔드포인트 포함
 app.include_router(store_router, prefix="", tags=["Store"])
+
+# /organizations - 조직 기반 멀티테넌시 관리
+# 조직 CRUD, 멤버십 관리, API 키 관리
+# 역할 계층 (RBAC): OWNER, ADMIN, MEMBER, VIEWER
+app.include_router(organizations_router, prefix="", tags=["Organizations"])
 
 # /a2a - A2A (Agent-to-Agent) Protocol endpoints
 # 외부 A2A 클라이언트와의 에이전트 간 통신 지원
