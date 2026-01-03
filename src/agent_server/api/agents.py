@@ -34,7 +34,7 @@ A2A Ecosystem 확장:
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..core.auth_deps import get_current_user
 from ..models import (
@@ -54,6 +54,7 @@ from ..services.agent_registry_service import (
     agent_registry_service,
 )
 from ..services.assistant_service import AssistantService, get_assistant_service
+from ..services.federation import get_federation_service
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -155,6 +156,7 @@ async def search_agents(
 async def discover_agents(
     request: AgentDiscoverRequest,
     user: User = Depends(get_current_user),  # noqa: ARG001
+    include_remote: bool = Query(False, description="Include federated peers"),
 ) -> AgentDiscoverResponse:
     """A2A 에이전트 검색 (Agent Registry 기반)
 
@@ -240,8 +242,14 @@ async def discover_agents(
                 is_healthy=agent.is_healthy,
                 registered_at=agent.registered_at,
                 agent_card_url=f"{card.url}/.well-known/agent-card.json",
+                source={"type": "local"},
             )
         )
+
+    if include_remote:
+        federation_service = get_federation_service()
+        remote_agents = await federation_service.discover_agents(filters)
+        discovered_agents.extend(remote_agents)
 
     return AgentDiscoverResponse(
         agents=discovered_agents,

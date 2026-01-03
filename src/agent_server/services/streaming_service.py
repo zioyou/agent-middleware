@@ -26,6 +26,7 @@
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -34,7 +35,7 @@ from ..models import Run
 from ..utils import extract_event_sequence, generate_event_id
 from .broker import broker_manager
 from .event_converter import EventConverter
-from .event_store import event_store, store_sse_event
+from .event_store import build_sse_event, event_store
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,18 @@ class StreamingService:
         self.event_counters: dict[str, int] = {}
         # LangGraph 이벤트 → Agent Protocol SSE 변환기
         self.event_converter = EventConverter()
+        self._storage_batches: dict[str, list[Any]] = {}
+        self._storage_batch_size = max(int(os.getenv("EVENT_STORE_BATCH_SIZE", "50")), 1)
+
+    async def _flush_storage_batch(self, run_id: str, force: bool = False) -> None:
+        batch = self._storage_batches.get(run_id, [])
+        if not batch:
+            return
+        if not force and len(batch) < self._storage_batch_size:
+            return
+
+        self._storage_batches[run_id] = []
+        await event_store.store_events(run_id, batch)
 
     def _process_interrupt_updates(self, raw_event: Any, only_interrupt_updates: bool) -> tuple[Any, bool]:
         """인터럽트 업데이트 처리 로직 (필터링 및 변환)
@@ -237,8 +250,7 @@ class StreamingService:
         # stream_mode에 따라 저장 형식 결정 및 저장
         if stream_mode_label == "messages":
             # 메시지 청크 스트리밍 (LLM 응답 등)
-            await store_sse_event(
-                run_id,
+            event = build_sse_event(
                 event_id,
                 "messages",
                 {
@@ -252,19 +264,21 @@ class StreamingService:
                     "node_path": node_path,
                 },
             )
+            self._storage_batches.setdefault(run_id, []).append(event)
+            await self._flush_storage_batch(run_id)
         elif stream_mode_label == "values" or stream_mode_label == "updates":
             # 그래프 상태 값 또는 업데이트
-            await store_sse_event(
-                run_id,
+            event = build_sse_event(
                 event_id,
                 "values",
                 {"type": "execution_values", "chunk": event_payload},
             )
+            self._storage_batches.setdefault(run_id, []).append(event)
+            await self._flush_storage_batch(run_id)
         elif stream_mode_label == "end":
             # 실행 완료 시그널
             payload_dict = event_payload if isinstance(event_payload, dict) else {}
-            await store_sse_event(
-                run_id,
+            event = build_sse_event(
                 event_id,
                 "end",
                 {
@@ -273,6 +287,8 @@ class StreamingService:
                     "final_output": payload_dict.get("final_output"),
                 },
             )
+            self._storage_batches.setdefault(run_id, []).append(event)
+            await self._flush_storage_batch(run_id, force=True)
         # 필요 시 다른 stream_mode 추가 가능
 
     async def signal_run_cancelled(self, run_id: str) -> None:
@@ -438,11 +454,11 @@ class StreamingService:
             - 저장된 이벤트는 시퀀스 순서대로 정렬되어 반환됨
         """
         if last_event_id:
-            stored_events = await event_store.get_events_since(run_id, last_event_id)
+            stored_events = event_store.stream_events_since(run_id, last_event_id)
         else:
-            stored_events = await event_store.get_all_events(run_id)
+            stored_events = event_store.stream_all_events(run_id)
 
-        for ev in stored_events:
+        async for ev in stored_events:
             sse_event = self._stored_event_to_sse(run_id, ev)
             if sse_event:
                 yield sse_event
@@ -658,6 +674,7 @@ class StreamingService:
             - 이벤트 카운터는 메모리에 유지 (작은 용량)
             - PostgreSQL 저장된 이벤트는 cleanup_old_events()가 주기적으로 정리
         """
+        await self._flush_storage_batch(run_id, force=True)
         broker_manager.cleanup_broker(run_id)
 
     def _stored_event_to_sse(self, run_id: str, ev: Any) -> str | None:

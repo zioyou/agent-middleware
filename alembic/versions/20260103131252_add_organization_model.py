@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic
 revision = "20260103131252"
-down_revision = "20260103100000"
+down_revision = "b3f2c8d4e5a6"  # Fixed: references actual revision ID of TTL migration
 branch_labels = None
 depends_on = None
 

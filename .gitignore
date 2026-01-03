@@ -34,8 +34,8 @@ htmlcov/
 # AI
 .claude/
 docs/plans/
-.auto-claude/
 
 # Local development tools
 .mcp.json
 .serena/
+.specify/

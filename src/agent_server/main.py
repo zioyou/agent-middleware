@@ -6,9 +6,11 @@ LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준
 애플리케이션 아키텍처:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. 미들웨어 스택 (요청 처리 순서):
-   ├─ CORS 미들웨어: 교차 출처 리소스 공유 설정
+   ├─ Audit 미들웨어: 감사 로그 수집 (outbox 패턴)
+   ├─ RateLimit 미들웨어: 요청 속도 제한 (Redis 기반)
+   ├─ Authentication 미들웨어: LangGraph SDK 기반 사용자 인증
    ├─ DoubleEncodedJSON 미들웨어: 프론트엔드 이중 인코딩 처리
-   └─ Authentication 미들웨어: LangGraph SDK 기반 사용자 인증
+   └─ CORS 미들웨어: 교차 출처 리소스 공유 설정
 
 2. 라우터 구조 (API 엔드포인트):
    ├─ /health: 서버 및 데이터베이스 상태 확인
@@ -17,6 +19,7 @@ LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준
    ├─ /runs: 에이전트 실행 및 스트리밍
    ├─ /store: LangGraph Store 장기 메모리
    ├─ /organizations: 조직 멀티테넌시 관리 (RBAC 포함)
+   ├─ /organizations/{org_id}/quotas: 쿼터 및 Rate Limit 관리
    └─ /a2a: A2A (Agent-to-Agent) Protocol 통신
 
 3. 라이프사이클 관리:
@@ -71,9 +74,12 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 from .a2a.router import router as a2a_router
+from .api.agent_auth import router as agent_auth_router
 from .api.agents import router as agents_router
 from .api.assistants import router as assistants_router
+from .api.audit import router as audit_router
 from .api.organizations import router as organizations_router
+from .api.quotas import router as quotas_router
 from .api.runs import router as runs_router
 from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
@@ -82,7 +88,8 @@ from .core.auth_middleware import get_auth_backend, on_auth_error
 from .core.cache import cache_manager
 from .core.database import db_manager
 from .core.health import router as health_router
-from .middleware import DoubleEncodedJSONMiddleware
+from .core.rate_limiter import rate_limiter
+from .middleware import AuditMiddleware, DoubleEncodedJSONMiddleware, RateLimitMiddleware
 from .models.errors import AgentProtocolError, get_error_type
 
 # ---------------------------------------------------------------------------
@@ -156,12 +163,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Redis 캐시 초기화 (Optional - 없으면 캐싱 비활성화)
     await cache_manager.initialize()
 
+    # Rate Limiter 초기화 (Optional - Redis 없으면 비활성화)
+    await rate_limiter.initialize()
+
     # LangGraph 서비스 초기화
     # open_langgraph.json에서 그래프 정의 로드 및 기본 어시스턴트 생성
     from .services.langgraph_service import get_langgraph_service
 
     langgraph_service = get_langgraph_service()
     await langgraph_service.initialize()
+
+    # Custom endpoint 서비스 초기화 및 라우트 등록
+    from .services.custom_endpoint_service import get_custom_endpoint_service
+
+    custom_endpoint_service = get_custom_endpoint_service()
+    custom_endpoint_service.initialize()
+    custom_endpoint_service.register_routes(_app)
 
     # 이벤트 저장소 백그라운드 정리 작업 시작
     # 오래된 SSE 이벤트를 주기적으로 삭제하여 디스크 공간 관리
@@ -175,6 +192,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await thread_cleanup_service.start()
 
+    # 감사 로그 Outbox 배치 이동 작업 시작
+    # outbox 테이블에서 파티션 테이블로 주기적으로 이동
+    from .services.audit_outbox_service import audit_outbox_service
+
+    await audit_outbox_service.start_mover()
+
+    # 감사 로그 파티션 자동 생성 (향후 3개월 파티션 확보)
+    # 파티션이 없으면 INSERT가 실패하므로 시작 시 확보 필수
+    from .services.partition_service import partition_service
+
+    try:
+        await partition_service.ensure_future_partitions(months_ahead=3)
+    except Exception as e:
+        logger.warning("Failed to ensure audit log partitions: %s", e)
+
     yield
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -187,11 +219,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if not task.done():
             task.cancel()
 
+    # 감사 로그 Outbox 배치 이동 작업 중지 (남은 레코드 플러시)
+    await audit_outbox_service.stop_mover()
+
     # 이벤트 저장소 정리 작업 중지
     await event_store.stop_cleanup_task()
 
     # TTL 스레드 정리 작업 중지
     await thread_cleanup_service.stop()
+
+    # Rate Limiter 정리
+    await rate_limiter.close()
 
     # Redis 캐시 연결 종료
     await cache_manager.close()
@@ -216,8 +254,8 @@ app = FastAPI(
 # 미들웨어 스택 구성 (역순으로 추가 = 실행은 정순)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 주의: FastAPI 미들웨어는 추가한 역순으로 실행됨
-# 추가 순서: CORS → DoubleEncodedJSON → Authentication
-# 실행 순서: Authentication → DoubleEncodedJSON → CORS → 라우터
+# 추가 순서: CORS → DoubleEncodedJSON → Authentication → RateLimit → Audit
+# 실행 순서: Audit → RateLimit → Authentication → DoubleEncodedJSON → CORS → 라우터
 
 # 1. CORS 미들웨어: 교차 출처 리소스 공유 설정
 # 프론트엔드가 다른 도메인에서 API를 호출할 수 있도록 허용
@@ -237,6 +275,16 @@ app.add_middleware(DoubleEncodedJSONMiddleware)
 # 주의: CORS 이후에 추가되어야 preflight 요청 처리 가능
 # 모든 요청에서 Authorization 헤더 검증 후 request.user 설정
 app.add_middleware(AuthenticationMiddleware, backend=get_auth_backend(), on_error=on_auth_error)
+
+# 4. Rate Limit 미들웨어: 요청 속도 제한
+# Authentication 이후에 실행되어 user.org_id 기반 제한 가능
+# Redis 없으면 비활성화 (graceful degradation)
+app.add_middleware(RateLimitMiddleware)
+
+# 5. Audit 미들웨어: 감사 로그 수집
+# 모든 요청을 감시하고 outbox 테이블에 로그 기록
+# Rate limit 응답 포함 모든 요청 기록
+app.add_middleware(AuditMiddleware)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # API 라우터 등록 (Agent Protocol 엔드포인트)
@@ -278,6 +326,18 @@ app.include_router(store_router, prefix="", tags=["Store"])
 # 조직 CRUD, 멤버십 관리, API 키 관리
 # 역할 계층 (RBAC): OWNER, ADMIN, MEMBER, VIEWER
 app.include_router(organizations_router, prefix="", tags=["Organizations"])
+
+# /organizations/{org_id}/quotas - 조직 쿼터 및 Rate Limit 관리
+# 사용량 조회 (MEMBER+), 제한 변경 (ADMIN+)
+app.include_router(quotas_router, prefix="", tags=["Quotas"])
+
+# /organizations/{org_id}/agents - 에이전트 신원 및 자격 증명 관리
+app.include_router(agent_auth_router, prefix="", tags=["Agent Auth"])
+
+# /audit - 감사 로그 조회 및 내보내기
+# ADMIN: 조회 가능, OWNER: 내보내기 가능
+# 멀티테넌트 격리를 위해 org_id 필터링 필수
+app.include_router(audit_router, prefix="", tags=["Audit"])
 
 # /a2a - A2A (Agent-to-Agent) Protocol endpoints
 # 외부 A2A 클라이언트와의 에이전트 간 통신 지원

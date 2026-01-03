@@ -1,13 +1,26 @@
 # Audit Logging Tasks
 
-> **Version**: 1.1 (Codex Review Incorporated)
+> **Version**: 1.2 (Multi-AI Council Review Incorporated)
 > **Last Updated**: 2026-01-03
 
 ## Overview
 
 | 총 작업 | 예상 기간 | 병렬 가능 | 순차 필수 |
 |---------|-----------|-----------|-----------|
-| 17개 | 2주 | 7개 | 10개 |
+| 20개 | 2주 | 7개 | 13개 |
+
+## 🔴 Critical Bug Fixes (Multi-AI Council Review - 2026-01-03)
+
+### Council Review Summary
+- **Reviewers**: Gemini (Security), Codex (Architecture), Qwen (Code Quality)
+- **Consensus Issues**: 3 critical bugs identified by 2+ AIs
+- **Action**: New Task 3.0.x series added to fix before middleware integration
+
+| Issue | Flagged By | Fix Task |
+|-------|------------|----------|
+| Batch mover transaction bug | Codex, Qwen | Task 3.0.1 |
+| Partition maintenance timebomb | Gemini, Codex | Task 3.0.2 |
+| Timestamp parsing vulnerability | Qwen | Task 3.0.3 |
 
 ## ⚠️ Key Design Changes (Codex Feedback)
 
@@ -142,7 +155,82 @@ def extract_resource_id(path: str) -> str | None:
 
 ---
 
-### Phase 3: Middleware Integration (Day 6-8)
+### Phase 3: Bug Fixes + Middleware Integration (Day 6-9)
+
+#### Task 3.0.1: 배치 Mover 트랜잭션 버그 수정 [순차] 🔴 CRITICAL
+**File**: `src/agent_server/services/audit_outbox_service.py`
+
+**Problem**: Per-row try/catch inside a single transaction doesn't work in PostgreSQL. A single DB error aborts the entire transaction.
+
+**Done Criteria**:
+- [x] Implement savepoint-based per-row isolation (`begin_nested()`)
+- [x] Add poison-pill retry counter (max 3 retries per record)
+- [x] Mark permanently failed records with error flag
+- [x] Update metrics to only count successful moves
+- [x] Add unit tests for transaction failure scenarios
+
+**Dependencies**: Phase 2 완료
+
+---
+
+#### Task 3.0.2: 파티션 자동화 서비스 [순차] 🔴 CRITICAL
+**File**: `src/agent_server/services/partition_service.py` (새 파일)
+
+**Problem**: Migration creates only 4 months of partitions. No automated mechanism to create future partitions (DoS after 4 months).
+
+```python
+class PartitionService:
+    """월별 파티션 자동 관리"""
+
+    async def ensure_future_partitions(self, months_ahead: int = 3):
+        """향후 N개월 파티션 생성"""
+        ...
+
+    async def cleanup_old_partitions(self, retention_days: int = 90):
+        """오래된 파티션 삭제"""
+        ...
+```
+
+**Done Criteria**:
+- [ ] `ensure_future_partitions()` - 향후 파티션 자동 생성
+- [ ] `cleanup_old_partitions()` - 90일 이상 파티션 삭제
+- [ ] `_create_partition_if_not_exists()` - 중복 생성 방지
+- [ ] `_list_partitions()` - 기존 파티션 조회
+- [ ] lifespan startup에서 자동 실행
+- [ ] 단위 테스트 5개 이상
+
+**Dependencies**: Task 1.3
+
+---
+
+#### Task 3.0.3: 타임스탬프 파싱 개선 [순차]
+**File**: `src/agent_server/services/audit_outbox_service.py`
+
+**Problem**: `datetime.fromisoformat(timestamp.replace("Z", "+00:00"))` can throw uncaught ValueError.
+
+**Done Criteria**:
+- [x] Robust `_parse_timestamp()` helper method
+- [x] Handle datetime, string, and None inputs
+- [x] Graceful fallback to `datetime.now(UTC)` on parse error
+- [x] Unit tests for edge cases
+
+**Dependencies**: Task 3.0.1
+
+---
+
+#### Task 3.0.4: 마스킹 패턴 확장 [병렬]
+**File**: `src/agent_server/utils/masking.py`
+
+**Problem**: Missing sensitive patterns (cookie, session, auth) and no circular reference protection.
+
+**Done Criteria**:
+- [ ] Add missing patterns: `cookie`, `session`, `sid`, `auth`, `set-cookie`
+- [ ] Add circular reference detection (`_seen` set)
+- [ ] Update unit tests
+
+**Dependencies**: 없음
+
+---
 
 #### Task 3.1: AuditMiddleware 구현 [순차]
 **File**: `src/agent_server/middleware/audit.py` (새 파일)

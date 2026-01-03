@@ -97,6 +97,10 @@ class DiscoveredAgent(BaseModel):
     is_healthy: bool = Field(True, description="헬스 체크 상태")
     registered_at: datetime = Field(..., description="등록 시간")
     agent_card_url: str = Field(..., description="전체 AgentCard JSON URL")
+    source: dict[str, str] | None = Field(
+        default=None,
+        description="Source metadata (local or remote peer)",
+    )
 
 
 class AgentDiscoverResponse(BaseModel):

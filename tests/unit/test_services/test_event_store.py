@@ -12,6 +12,11 @@ from src.agent_server.core.sse import SSEEvent
 from src.agent_server.services.event_store import EventStore, store_sse_event
 
 
+async def _async_row_iter(rows):
+    for row in rows:
+        yield row
+
+
 class TestEventStore:
     """Unit tests for EventStore class"""
 
@@ -65,11 +70,12 @@ class TestEventStore:
             stmt, params = call_args[0]
 
             # Check parameters
-            assert params["id"] == event.id
-            assert params["run_id"] == run_id
-            assert params["seq"] == 1  # extracted from event ID
-            assert params["event"] == event.event
-            assert params["data"] == event.data
+            row_params = params[0]
+            assert row_params["id"] == event.id
+            assert row_params["run_id"] == run_id
+            assert row_params["seq"] == 1  # extracted from event ID
+            assert row_params["event"] == event.event
+            assert row_params["data"] == event.data
 
     @pytest.mark.asyncio
     async def test_store_event_sequence_extraction_edge_cases(
@@ -101,7 +107,7 @@ class TestEventStore:
 
                 # Check that the correct sequence was extracted
                 call_args = mock_conn.execute.call_args
-                params = call_args[0][1]  # Get params dict
+                params = call_args[0][1][0]  # Get params dict
                 assert params["seq"] == expected_seq, f"Failed for event_id: {event_id}"
 
     @pytest.mark.asyncio
@@ -142,17 +148,15 @@ class TestEventStore:
                 created_at=datetime.now(UTC),
             ),
         ]
-        mock_result = Mock()
-        mock_result.fetchall.return_value = mock_rows
-        mock_conn.execute = AsyncMock(return_value=mock_result)
+        mock_conn.stream = AsyncMock(return_value=_async_row_iter(mock_rows))
 
         with patch(
             "src.agent_server.services.event_store.db_manager"
         ) as mock_db_manager:
-            mock_db_manager.get_engine.return_value.begin.return_value.__aenter__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aenter__ = (
                 AsyncMock(return_value=mock_conn)
             )
-            mock_db_manager.get_engine.return_value.begin.return_value.__aexit__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aexit__ = (
                 AsyncMock(return_value=None)
             )
 
@@ -166,7 +170,7 @@ class TestEventStore:
             assert events[1].id == f"{run_id}_event_7"
 
             # Verify query parameters
-            call_args = mock_conn.execute.call_args
+            call_args = mock_conn.stream.call_args
             params = call_args[0][1]
             assert params["run_id"] == run_id
             assert params["last_seq"] == 5  # extracted from last_event_id
@@ -174,17 +178,15 @@ class TestEventStore:
     @pytest.mark.asyncio
     async def test_get_events_since_no_events(self, event_store, mock_conn):
         """Test retrieval when no events exist after last_event_id"""
-        mock_result = Mock()
-        mock_result.fetchall.return_value = []
-        mock_conn.execute = AsyncMock(return_value=mock_result)
+        mock_conn.stream = AsyncMock(return_value=_async_row_iter([]))
 
         with patch(
             "src.agent_server.services.event_store.db_manager"
         ) as mock_db_manager:
-            mock_db_manager.get_engine.return_value.begin.return_value.__aenter__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aenter__ = (
                 AsyncMock(return_value=mock_conn)
             )
-            mock_db_manager.get_engine.return_value.begin.return_value.__aexit__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aexit__ = (
                 AsyncMock(return_value=None)
             )
 
@@ -195,24 +197,22 @@ class TestEventStore:
     @pytest.mark.asyncio
     async def test_get_events_since_invalid_last_event_id(self, event_store, mock_conn):
         """Test handling of malformed last_event_id"""
-        mock_result = Mock()
-        mock_result.fetchall.return_value = []
-        mock_conn.execute = AsyncMock(return_value=mock_result)
+        mock_conn.stream = AsyncMock(return_value=_async_row_iter([]))
 
         with patch(
             "src.agent_server.services.event_store.db_manager"
         ) as mock_db_manager:
-            mock_db_manager.get_engine.return_value.begin.return_value.__aenter__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aenter__ = (
                 AsyncMock(return_value=mock_conn)
             )
-            mock_db_manager.get_engine.return_value.begin.return_value.__aexit__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aexit__ = (
                 AsyncMock(return_value=None)
             )
 
             # Should default to last_seq = -1 for malformed IDs
             await event_store.get_events_since("test-run", "malformed_id")
 
-            call_args = mock_conn.execute.call_args
+            call_args = mock_conn.stream.call_args
             params = call_args[0][1]
             assert params["last_seq"] == -1
 
@@ -241,17 +241,15 @@ class TestEventStore:
                 created_at=datetime.now(UTC),
             ),
         ]
-        mock_result = Mock()
-        mock_result.fetchall.return_value = mock_rows
-        mock_conn.execute = AsyncMock(return_value=mock_result)
+        mock_conn.stream = AsyncMock(return_value=_async_row_iter(mock_rows))
 
         with patch(
             "src.agent_server.services.event_store.db_manager"
         ) as mock_db_manager:
-            mock_db_manager.get_engine.return_value.begin.return_value.__aenter__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aenter__ = (
                 AsyncMock(return_value=mock_conn)
             )
-            mock_db_manager.get_engine.return_value.begin.return_value.__aexit__ = (
+            mock_db_manager.get_engine.return_value.connect.return_value.__aexit__ = (
                 AsyncMock(return_value=None)
             )
 
@@ -263,7 +261,7 @@ class TestEventStore:
             assert events[2].event == "end"
 
             # Verify events are ordered by sequence
-            call_args = mock_conn.execute.call_args
+            call_args = mock_conn.stream.call_args
             sql_query = call_args[0][0]
             assert "ORDER BY seq ASC" in str(sql_query)
 

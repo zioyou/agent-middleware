@@ -8,12 +8,30 @@ Agent Protocol v0.2.0 호환 모델을 포함합니다.
 - ThreadUpdateRequest (threads.py update 엔드포인트, SDK threads.update 호환)
 - StoreNamespaceRequest, StoreNamespaceResponse (store.py namespaces에서 사용)
 - Organization, OrganizationMember, APIKey (멀티테넌시)
+- Audit* (감사 로깅)
+- RateLimit* (Rate Limiting)
 """
 
 from .a2a import (
     AgentDiscoverRequest,
     AgentDiscoverResponse,
     DiscoveredAgent,
+)
+from .audit import (
+    AuditAction,
+    AuditEntry,
+    AuditExportFormat,
+    AuditExportRequest,
+    AuditExportResponse,
+    AuditGroupBy,
+    AuditLogFilters,
+    AuditLogListRequest,
+    AuditLogListResponse,
+    AuditLogResponse,
+    AuditResourceType,
+    AuditSummaryItem,
+    AuditSummaryRequest,
+    AuditSummaryResponse,
 )
 from .assistants import (
     Agent,
@@ -73,12 +91,38 @@ from .threads import (
     ThreadState,
     ThreadUpdateRequest,
 )
+from .rate_limit import (
+    OrgQuotaResponse,
+    OrgQuotas,
+    OrgRateLimits,
+    OrgRateLimitsUpdate,
+    OrgUsageStats,
+    QuotaCheckResult,
+    RateLimitConfig,
+    RateLimitKey,
+    RateLimitResponse,
+)
 
 __all__ = [
     # A2A
     "AgentDiscoverRequest",
     "AgentDiscoverResponse",
     "DiscoveredAgent",
+    # Audit
+    "AuditAction",
+    "AuditEntry",
+    "AuditExportFormat",
+    "AuditExportRequest",
+    "AuditExportResponse",
+    "AuditGroupBy",
+    "AuditLogFilters",
+    "AuditLogListRequest",
+    "AuditLogListResponse",
+    "AuditLogResponse",
+    "AuditResourceType",
+    "AuditSummaryItem",
+    "AuditSummaryRequest",
+    "AuditSummaryResponse",
     # Assistants
     "Agent",
     "AgentCapabilities",
@@ -137,4 +181,14 @@ __all__ = [
     "ThreadSearchResponse",
     "ThreadState",
     "ThreadUpdateRequest",
+    # Rate Limiting
+    "OrgQuotaResponse",
+    "OrgQuotas",
+    "OrgRateLimits",
+    "OrgRateLimitsUpdate",
+    "OrgUsageStats",
+    "QuotaCheckResult",
+    "RateLimitConfig",
+    "RateLimitKey",
+    "RateLimitResponse",
 ]

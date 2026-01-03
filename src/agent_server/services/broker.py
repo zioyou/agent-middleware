@@ -24,12 +24,46 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
+from enum import Enum
 from typing import Any
 
 from .base_broker import BaseBrokerManager, BaseRunBroker
 
 logger = logging.getLogger(__name__)
+
+
+class BackpressurePolicy(str, Enum):
+    """Queue backpressure behavior when the broker is full."""
+
+    BLOCK = "block"
+    DROP_OLDEST = "drop_oldest"
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s value %r; using default %d", name, raw_value, default)
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _parse_backpressure_policy() -> BackpressurePolicy:
+    raw_value = os.getenv("BROKER_BACKPRESSURE_POLICY", BackpressurePolicy.BLOCK.value).lower()
+    try:
+        return BackpressurePolicy(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid BROKER_BACKPRESSURE_POLICY value %r; defaulting to %s",
+            raw_value,
+            BackpressurePolicy.BLOCK.value,
+        )
+        return BackpressurePolicy.BLOCK
 
 
 class RunBroker(BaseRunBroker):
@@ -52,9 +86,28 @@ class RunBroker(BaseRunBroker):
 
     def __init__(self, run_id: str):
         self.run_id = run_id
-        self.queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        queue_maxsize = _parse_int_env("BROKER_QUEUE_MAXSIZE", 1000)
+        self._backpressure_policy = _parse_backpressure_policy()
+        self.queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=queue_maxsize)
         self.finished = asyncio.Event()  # 실행 완료 플래그
         self._created_at = asyncio.get_event_loop().time()  # 생성 시간 (초 단위)
+
+    @staticmethod
+    def _is_terminal_event(payload: Any) -> bool:
+        if isinstance(payload, tuple) and payload:
+            return payload[0] in {"end", "error"}
+        return False
+
+    def _drop_oldest_non_terminal(self) -> bool:
+        queue = getattr(self.queue, "_queue", None)
+        if queue is None:
+            return False
+
+        for idx, item in enumerate(queue):
+            if not self._is_terminal_event(item[1]):
+                del queue[idx]
+                return True
+        return False
 
     async def put(self, event_id: str, payload: Any) -> None:
         """이벤트를 브로커 큐에 추가 (Producer 역할)
@@ -74,7 +127,14 @@ class RunBroker(BaseRunBroker):
             logger.warning(f"Attempted to put event {event_id} into finished broker for run {self.run_id}")
             return
 
-        await self.queue.put((event_id, payload))
+        if self.queue.full() and self._backpressure_policy == BackpressurePolicy.DROP_OLDEST:
+            dropped = self._drop_oldest_non_terminal()
+            if dropped:
+                self.queue.put_nowait((event_id, payload))
+            else:
+                await self.queue.put((event_id, payload))
+        else:
+            await self.queue.put((event_id, payload))
 
         # "end" 이벤트 감지 시 브로커 완료 처리
         # payload는 (event_type, data) 형식의 튜플

@@ -9,6 +9,8 @@ LangGraph는 자체 체크포인터로 대화 상태를 관리하고,
 • `Organization` - 조직(테넌트) 정의 (멀티테넌시)
 • `OrganizationMember` - 조직 멤버십 (역할 기반)
 • `APIKey` - 조직별 API 키 관리
+• `AgentIdentity` - 에이전트 신원 관리 (A2A 인증)
+• `AgentCredential` - 에이전트 자격 증명 관리 (JWT/API 키)
 • `Assistant` - 어시스턴트 정의 (그래프 ID, 설정, 사용자 정보)
 • `AssistantVersion` - 어시스턴트 버전 이력 추적
 • `Thread` - 대화 스레드 메타데이터 (상태, 사용자 정보)
@@ -30,10 +32,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Depends, Request
 from sqlalchemy import (
     TIMESTAMP,
+    Boolean,
     ForeignKey,
     Index,
     Integer,
@@ -44,6 +48,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from .rls import clear_rls_context, set_rls_context
 
 class Base(DeclarativeBase):
     """Declarative base class for all ORM models."""
@@ -174,6 +179,79 @@ class APIKey(Base):
         Index("idx_api_key_org_id", "org_id"),
         Index("idx_api_key_hash", "key_hash", unique=True),
         Index("idx_api_key_prefix", "key_prefix"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent Authentication Models
+# ---------------------------------------------------------------------------
+
+
+class AgentIdentity(Base):
+    """에이전트 신원 ORM 모델
+
+    에이전트는 조직 내에서 고유한 신원을 가지며,
+    A2A 인증 및 자격 증명 관리의 기준이 됩니다.
+    """
+
+    __tablename__ = "agent_identity"
+
+    id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'")
+    )
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("idx_agent_identity_org_id", "org_id"),
+        Index("idx_agent_identity_status", "status"),
+        Index("idx_agent_identity_org_name", "org_id", "name"),
+    )
+
+
+class AgentCredential(Base):
+    """에이전트 자격 증명 ORM 모델
+
+    JWT issuer 또는 API 키 기반의 자격 증명을 저장합니다.
+    """
+
+    __tablename__ = "agent_credential"
+
+    id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    agent_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("agent_identity.id", ondelete="CASCADE"), nullable=False
+    )
+    credential_type: Mapped[str] = mapped_column(Text, nullable=False)
+    credential_data: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    __table_args__ = (
+        Index("idx_agent_credential_agent_id", "agent_id"),
+        Index("idx_agent_credential_fingerprint", "fingerprint", unique=True),
+        Index("idx_agent_credential_type", "credential_type"),
     )
 
 
@@ -405,6 +483,140 @@ class Run(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Audit Logging Models
+# ---------------------------------------------------------------------------
+
+
+class AuditLogOutbox(Base):
+    """감사 로그 Outbox 테이블 ORM 모델
+
+    Outbox 패턴을 사용하여 감사 로그의 신뢰성을 보장합니다.
+    미들웨어에서 즉시 INSERT하고, 백그라운드 작업이 파티션 테이블로 이동합니다.
+
+    이 패턴의 장점:
+    - 프로세스 크래시에도 데이터 손실 없음 (동기 DB 쓰기)
+    - 비동기 처리의 성능 이점 유지 (배치 이동)
+    - SELECT FOR UPDATE SKIP LOCKED으로 동시성 안전
+
+    주요 필드:
+    - id: 고유 식별자 (UUID, DB에서 자동 생성)
+    - created_at: 생성 시간 (인덱스, 배치 처리 순서용)
+    - payload: 전체 감사 로그 데이터 (JSONB)
+    - processed: 처리 완료 여부 (배치 이동 후 삭제됨)
+    """
+
+    __tablename__ = "audit_logs_outbox"
+
+    id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), index=True
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    processed: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+
+    __table_args__ = (
+        # Partial index for efficiency: only track unprocessed items
+        # This keeps the index small as most records become processed=true
+        Index(
+            "idx_audit_outbox_unprocessed",
+            "created_at",
+            postgresql_where=text("processed = false"),
+        ),
+    )
+
+
+class AuditLog(Base):
+    """감사 로그 메인 테이블 ORM 모델 (월별 파티셔닝)
+
+    모든 API 요청에 대한 감사 로그를 저장하는 파티션 테이블입니다.
+    Outbox 테이블에서 배치로 이동되어 저장됩니다.
+
+    파티셔닝 전략:
+    - RANGE 파티셔닝 (timestamp 기준)
+    - 월별 파티션 자동 생성 (PartitionService)
+    - 90일 이상 오래된 파티션 자동 삭제
+
+    주요 필드 그룹:
+    1. 식별자: id, timestamp (복합 PK, 파티션 키)
+    2. 사용자: user_id, org_id (멀티테넌트 격리)
+    3. 액션: action, resource_type, resource_id
+    4. 요청: http_method, path, request_body, ip_address, user_agent
+    5. 응답: status_code, response_summary, duration_ms
+    6. 오류: error_message, error_class (예외 발생 시)
+    7. 스트리밍: is_streaming (SSE 응답 여부)
+    8. 메타데이터: metadata (추가 정보)
+
+    인덱스 전략:
+    - (org_id, timestamp): 조직별 시간순 조회
+    - (user_id, timestamp): 사용자별 시간순 조회
+    - (resource_type, resource_id): 리소스별 조회
+    """
+
+    __tablename__ = "audit_logs"
+
+    # 복합 PK (파티셔닝 요구사항: 파티션 키가 PK에 포함되어야 함)
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), primary_key=True
+    )
+
+    # 사용자 정보
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # NOTE: org_id intentionally has NO foreign key to organization table.
+    # Audit logs must be immutable and survive organization deletion.
+    # Multi-tenant isolation is enforced at the API layer via AuditLogFilters.
+    org_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 액션 정보
+    action: Mapped[str] = mapped_column(Text, nullable=False)  # CREATE, READ, UPDATE, DELETE, RUN
+    resource_type: Mapped[str] = mapped_column(Text, nullable=False)  # assistant, thread, run
+    resource_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # HTTP 요청 정보
+    http_method: Mapped[str] = mapped_column(Text, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 요청/응답 데이터
+    request_body: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    response_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # 오류 정보 (Codex 피드백: error_class 추가)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 스트리밍 여부 (Codex 피드백: is_streaming 추가)
+    is_streaming: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+
+    # 추가 메타데이터
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+
+    __table_args__ = (
+        # 조직별 시간순 조회 최적화 (멀티테넌트 필수)
+        Index("idx_audit_logs_org_timestamp", "org_id", "timestamp"),
+        # 사용자별 시간순 조회 최적화
+        Index("idx_audit_logs_user_timestamp", "user_id", "timestamp"),
+        # 리소스별 조회 최적화
+        Index("idx_audit_logs_resource", "resource_type", "resource_id"),
+        # 액션별 조회 (선택적)
+        Index("idx_audit_logs_action", "action"),
+        # 월별 파티셔닝 설정
+        {"postgresql_partition_by": "RANGE (timestamp)"},
+    )
+
+
 class RunEvent(Base):
     """실행 이벤트 저장 ORM 모델 (SSE 재생용)
 
@@ -466,8 +678,38 @@ def _get_session_maker() -> async_sessionmaker[AsyncSession]:
     return async_session_maker
 
 
+def _extract_rls_context(request: Request) -> tuple[str | None, str | None]:
+    """Extract org/user identifiers from the authenticated request context."""
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None, None
+
+    user_payload = user.to_dict() if hasattr(user, "to_dict") else None
+    if isinstance(user_payload, dict):
+        return user_payload.get("org_id"), user_payload.get("identity")
+
+    return getattr(user, "org_id", None), getattr(user, "identity", None)
+
+
+async def _get_session_core(request: Request | None) -> AsyncIterator[AsyncSession]:
+    """Core session generator with optional RLS support."""
+    maker = _get_session_maker()
+    async with maker() as session:
+        rls_active = False
+        if request is not None:
+            org_id, user_id = _extract_rls_context(request)
+            if org_id is not None or user_id is not None:
+                await set_rls_context(session, org_id=org_id, user_id=user_id)
+                rls_active = True
+        try:
+            yield session
+        finally:
+            if rls_active:
+                await clear_rls_context(session)
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI 라우터용 데이터베이스 세션 의존성
+    """FastAPI 라우터용 데이터베이스 세션 의존성 (RLS 없음)
 
     이 함수는 FastAPI의 Depends()에서 사용되어 각 요청마다
     새로운 AsyncSession을 생성하고 요청 종료 시 자동으로 정리합니다.
@@ -481,6 +723,25 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     Yields:
         AsyncSession: 요청별 데이터베이스 세션
     """
-    maker = _get_session_maker()
-    async with maker() as session:
+    async for session in _get_session_core(None):
+        yield session
+
+
+async def get_session_with_rls(request: Request) -> AsyncIterator[AsyncSession]:
+    """FastAPI 라우터용 데이터베이스 세션 의존성 (RLS 포함)
+
+    이 함수는 요청 컨텍스트에서 org_id/user_id를 추출하여
+    Row-Level Security 컨텍스트를 자동으로 설정합니다.
+
+    사용 예:
+        @router.get("/secure-data")
+        async def get_data(session: AsyncSession = Depends(get_session_with_rls)):
+            # RLS가 자동으로 적용됨
+            result = await session.execute(select(SecureData))
+            return result.scalars().all()
+
+    Yields:
+        AsyncSession: RLS 컨텍스트가 설정된 데이터베이스 세션
+    """
+    async for session in _get_session_core(request):
         yield session

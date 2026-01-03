@@ -25,7 +25,7 @@ PostgreSQL 데이터베이스에 저장하여 재생 기능을 제공합니다.
 
 import asyncio
 import contextlib
-import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from sqlalchemy import bindparam, text
@@ -68,6 +68,27 @@ class EventStore:
 
     def __init__(self) -> None:
         self._cleanup_task: asyncio.Task | None = None
+
+    @staticmethod
+    def _extract_event_seq(event_id: str) -> int:
+        try:
+            return int(str(event_id).split("_event_")[-1])
+        except Exception:
+            return 0
+
+    def _build_insert_rows(self, run_id: str, events: list[SSEEvent]) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for event in events:
+            rows.append(
+                {
+                    "id": event.id,
+                    "run_id": run_id,
+                    "seq": self._extract_event_seq(event.id),
+                    "event": event.event,
+                    "data": event.data,
+                }
+            )
+        return rows
 
     async def start_cleanup_task(self) -> None:
         """백그라운드 정리 작업 시작
@@ -130,11 +151,12 @@ class EventStore:
             - ON CONFLICT DO NOTHING으로 중복 삽입 방지
             - created_at은 DB에서 NOW()로 자동 설정
         """
-        # 이벤트 ID에서 시퀀스 번호 추출 (형식: {run_id}_event_{seq})
-        try:
-            seq = int(str(event.id).split("_event_")[-1])
-        except Exception:
-            seq = 0
+        await self.store_events(run_id, [event])
+
+    async def store_events(self, run_id: str, events: list[SSEEvent]) -> None:
+        """여러 SSE 이벤트를 PostgreSQL에 배치로 저장"""
+        if not events:
+            return
 
         engine = db_manager.get_engine()
         async with engine.begin() as conn:
@@ -145,16 +167,50 @@ class EventStore:
                 ON CONFLICT (id) DO NOTHING
                 """
             ).bindparams(bindparam("data", type_=JSONB))
-            await conn.execute(
-                stmt,
-                {
-                    "id": event.id,
-                    "run_id": run_id,
-                    "seq": seq,
-                    "event": event.event,
-                    "data": event.data,
-                },
+            await conn.execute(stmt, self._build_insert_rows(run_id, events))
+
+    async def stream_events_since(
+        self, run_id: str, last_event_id: str
+    ) -> AsyncIterator[SSEEvent]:
+        """특정 이벤트 이후의 모든 이벤트를 스트리밍 조회"""
+        try:
+            last_seq = int(str(last_event_id).split("_event_")[-1])
+        except Exception:
+            last_seq = -1
+
+        engine = db_manager.get_engine()
+        async with engine.connect() as conn:
+            rs = await conn.stream(
+                text(
+                    """
+                    SELECT id, event, data, created_at
+                    FROM run_events
+                    WHERE run_id = :run_id AND seq > :last_seq
+                    ORDER BY seq ASC
+                    """
+                ),
+                {"run_id": run_id, "last_seq": last_seq},
             )
+            async for row in rs:
+                yield SSEEvent(id=row.id, event=row.event, data=row.data, timestamp=row.created_at)
+
+    async def stream_all_events(self, run_id: str) -> AsyncIterator[SSEEvent]:
+        """특정 실행의 모든 이벤트를 스트리밍 조회"""
+        engine = db_manager.get_engine()
+        async with engine.connect() as conn:
+            rs = await conn.stream(
+                text(
+                    """
+                    SELECT id, event, data, created_at
+                    FROM run_events
+                    WHERE run_id = :run_id
+                    ORDER BY seq ASC
+                    """
+                ),
+                {"run_id": run_id},
+            )
+            async for row in rs:
+                yield SSEEvent(id=row.id, event=row.event, data=row.data, timestamp=row.created_at)
 
     async def get_events_since(self, run_id: str, last_event_id: str) -> list[SSEEvent]:
         """특정 이벤트 이후의 모든 이벤트 조회 (재연결 시 재생용)
@@ -178,27 +234,7 @@ class EventStore:
             - last_event_id 파싱 실패 시 last_seq = -1 (모든 이벤트 반환)
             - SSE Last-Event-ID 헤더와 함께 사용됨
         """
-        # 마지막 이벤트 ID에서 시퀀스 번호 추출
-        try:
-            last_seq = int(str(last_event_id).split("_event_")[-1])
-        except Exception:
-            last_seq = -1  # 파싱 실패 시 모든 이벤트 반환
-
-        engine = db_manager.get_engine()
-        async with engine.begin() as conn:
-            rs = await conn.execute(
-                text(
-                    """
-                    SELECT id, event, data, created_at
-                    FROM run_events
-                    WHERE run_id = :run_id AND seq > :last_seq
-                    ORDER BY seq ASC
-                    """
-                ),
-                {"run_id": run_id, "last_seq": last_seq},
-            )
-            rows = rs.fetchall()
-        return [SSEEvent(id=r.id, event=r.event, data=r.data, timestamp=r.created_at) for r in rows]
+        return [event async for event in self.stream_events_since(run_id, last_event_id)]
 
     async def get_all_events(self, run_id: str) -> list[SSEEvent]:
         """특정 실행의 모든 이벤트 조회 (전체 재생용)
@@ -216,21 +252,7 @@ class EventStore:
             - seq ASC 정렬로 발생 순서대로 반환
             - 클라이언트가 Last-Event-ID 없이 연결할 때 사용됨
         """
-        engine = db_manager.get_engine()
-        async with engine.begin() as conn:
-            rs = await conn.execute(
-                text(
-                    """
-                    SELECT id, event, data, created_at
-                    FROM run_events
-                    WHERE run_id = :run_id
-                    ORDER BY seq ASC
-                    """
-                ),
-                {"run_id": run_id},
-            )
-            rows = rs.fetchall()
-        return [SSEEvent(id=r.id, event=r.event, data=r.data, timestamp=r.created_at) for r in rows]
+        return [event async for event in self.stream_all_events(run_id)]
 
     async def cleanup_events(self, run_id: str) -> None:
         """특정 실행의 모든 이벤트 삭제
@@ -380,10 +402,9 @@ async def store_sse_event(run_id: str, event_id: str, event_type: str, data: dic
 
     동작 흐름:
     1. GeneralSerializer로 복잡한 객체 직렬화 (datetime, UUID 등)
-    2. JSON 라운드트립으로 JSONB 호환성 보장
-    3. 직렬화 실패 시 문자열로 변환하여 저장 (폴백)
-    4. SSEEvent 객체 생성 (UTC 타임스탬프 포함)
-    5. event_store.store_event() 호출하여 DB 저장
+    2. 직렬화 실패 시 문자열로 변환하여 저장 (폴백)
+    3. SSEEvent 객체 생성 (UTC 타임스탬프 포함)
+    4. event_store.store_event() 호출하여 DB 저장
 
     Args:
         run_id (str): 실행 고유 식별자
@@ -399,15 +420,22 @@ async def store_sse_event(run_id: str, event_id: str, event_type: str, data: dic
         - 직렬화 실패 시 {"raw": str(data)}로 저장하여 실행 중단 방지
         - streaming_service.py에서 주로 사용됨
     """
+    event = build_sse_event(event_id, event_type, data)
+    await event_store.store_event(run_id, event)
+    return event
+
+
+def build_sse_event(event_id: str, event_type: str, data: dict) -> SSEEvent:
+    """SSE 이벤트를 직렬화하여 생성 (저장 없이)"""
     serializer = GeneralSerializer()
 
     # 복잡한 객체를 JSONB 안전 형식으로 직렬화
     try:
-        safe_data = json.loads(json.dumps(data, default=serializer.serialize))
+        safe_data = serializer.serialize(data)
     except Exception:
-        # 직렬화 실패 시 문자열로 변환 (실행 중단 방지)
-        safe_data = {"raw": str(data)}
+        try:
+            safe_data = {"raw": str(data)}
+        except Exception:
+            safe_data = {"raw": "<unserializable>"}
 
-    event = SSEEvent(id=event_id, event=event_type, data=safe_data, timestamp=datetime.now(UTC))
-    await event_store.store_event(run_id, event)
-    return event
+    return SSEEvent(id=event_id, event=event_type, data=safe_data, timestamp=datetime.now(UTC))
