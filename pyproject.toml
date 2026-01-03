@@ -57,6 +57,9 @@ sqlite = [
     "langgraph-checkpoint-sqlite>=3.0.0",
     "aiosqlite>=0.19.0",
 ]
+redis = [
+    "redis>=5.0.0",
+]
 
 [project.scripts]
 olg = "olg.cli:app"
@@ -130,6 +133,7 @@ markers = [
     "hitl: marks tests for Human-in-the-Loop functionality",
     "real_graph: marks tests using real LangGraph graphs with fake LLM",
     "integration: marks tests as integration tests",
+    "redis: marks tests that require Redis",
 ]
 
 [tool.bandit]

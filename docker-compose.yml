@@ -25,11 +25,14 @@ services:
       - "${PORT:-8000}:${PORT:-8000}"
     environment:
       - DATABASE_URL=postgresql+asyncpg://user:password@postgres:5432/open_langgraph
+      - REDIS_URL=redis://redis:6379/0
       - AUTH_TYPE=noop
       - DEBUG=true
       - PORT=${PORT:-8000}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./open_langgraph.json:/app/open_langgraph.json:ro
@@ -46,15 +49,18 @@ services:
         uvicorn src.agent_server.main:app --host 0.0.0.0 --port $${PORT:-8000} --reload
       "
 
-  # Redis (optional - for advanced queuing in future phases)
+  # Redis for caching (optional - app works without it)
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    profiles:
-      - redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

@@ -34,6 +34,7 @@ from ..core.orm import Assistant as AssistantORM
 from ..core.orm import AssistantVersion as AssistantVersionORM
 from ..core.orm import get_session
 from ..models import Assistant, AssistantCreate, AssistantSearchRequest, AssistantUpdate
+from ..services.cache_service import cache_service
 from ..services.langgraph_service import LangGraphService, get_langgraph_service
 
 CompiledGraph = CompiledStateGraph[Any, Any, Any, Any]
@@ -341,6 +342,9 @@ class AssistantService:
         self.session.add(assistant_version_orm)
         await self.session.commit()
 
+        # 캐시 무효화 (새 assistant가 목록에 반영되도록)
+        await cache_service.invalidate_user_assistants(user_identity)
+
         return to_pydantic(assistant_orm)
 
     async def list_assistants(self, user_identity: str) -> list[Assistant]:
@@ -581,6 +585,10 @@ class AssistantService:
         updated_assistant = await self.session.scalar(stmt)
         if updated_assistant is None:
             raise HTTPException(500, f"Assistant '{assistant_id}' was updated but could not be reloaded")
+
+        # 캐시 무효화 (업데이트된 내용 반영)
+        await cache_service.invalidate_assistant(user_identity, assistant_id)
+
         return to_pydantic(updated_assistant)
 
     async def delete_assistant(self, assistant_id: str, user_identity: str) -> dict:
@@ -611,6 +619,9 @@ class AssistantService:
         # CASCADE DELETE로 버전 이력, 실행, 이벤트도 함께 삭제됨
         await self.session.delete(assistant)
         await self.session.commit()
+
+        # 캐시 무효화 (삭제된 assistant 제거)
+        await cache_service.invalidate_assistant(user_identity, assistant_id)
 
         return {"status": "deleted"}
 

@@ -77,6 +77,7 @@ from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
 from .api.threads import router as threads_router
 from .core.auth_middleware import get_auth_backend, on_auth_error
+from .core.cache import cache_manager
 from .core.database import db_manager
 from .core.health import router as health_router
 from .middleware import DoubleEncodedJSONMiddleware
@@ -108,12 +109,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
        - LangGraph AsyncPostgresStore 초기화 (장기 메모리)
        - 데이터베이스 스키마 자동 생성 (.setup() 호출)
 
-    2. LangGraph 서비스 초기화
+    2. Redis 캐시 초기화 (Optional)
+       - REDIS_URL 환경변수가 있으면 Redis 연결
+       - 없으면 캐싱 비활성화 (graceful degradation)
+
+    3. LangGraph 서비스 초기화
        - open_langgraph.json에서 그래프 정의 로드
        - 각 그래프에 대한 기본 어시스턴트 생성 (UUID5 기반)
        - 그래프 캐싱 시스템 준비
 
-    3. 이벤트 저장소 정리 작업 시작
+    4. 이벤트 저장소 정리 작업 시작
        - 오래된 SSE 이벤트 자동 삭제를 위한 백그라운드 태스크 시작
        - 기본 7일 이상 경과한 이벤트 정리
 
@@ -146,6 +151,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     await db_manager.initialize()
 
+    # Redis 캐시 초기화 (Optional - 없으면 캐싱 비활성화)
+    await cache_manager.initialize()
+
     # LangGraph 서비스 초기화
     # open_langgraph.json에서 그래프 정의 로드 및 기본 어시스턴트 생성
     from .services.langgraph_service import get_langgraph_service
@@ -173,6 +181,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # 이벤트 저장소 정리 작업 중지
     await event_store.stop_cleanup_task()
+
+    # Redis 캐시 연결 종료
+    await cache_manager.close()
 
     # 데이터베이스 연결 종료
     await db_manager.close()

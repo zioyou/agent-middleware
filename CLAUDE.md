@@ -190,6 +190,29 @@ DATABASE_URL=sqlite:///./data/open_langgraph.db
 DATABASE_URL=sqlite:///:memory:
 ```
 
+### Redis Caching (Optional)
+
+Redis 캐싱을 통해 Assistant 메타데이터 조회 성능을 개선합니다.
+
+**설치**: `uv pip install ".[redis]"`
+
+**환경 변수**:
+```bash
+# Optional - 설정하지 않으면 캐싱 비활성화 (graceful degradation)
+REDIS_URL=redis://localhost:6379/0
+CACHE_TTL_DEFAULT=3600  # 기본 TTL (초)
+```
+
+**캐싱 대상**:
+- Assistant 메타데이터 (TTL: 1시간)
+- 그래프 스키마 (TTL: 2시간)
+- 실행 정보 (TTL: 5분)
+
+**Docker Compose**: Redis 서비스가 기본 포함되어 있습니다.
+```bash
+docker compose up -d  # postgres + redis 모두 시작
+```
+
 ### Configuration System
 
 **open_langgraph.json**: Central configuration file that defines:
