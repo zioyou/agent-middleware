@@ -1,6 +1,6 @@
 # Open LangGraph Platform
 
-셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요
+셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요.  
 LangGraph Platform을 자체 인프라로 대체하세요.  
 에이전트 오케스트레이션을 완전히 제어하고자 하는 개발자를 위해 FastAPI + PostgreSQL로 구축되었습니다.
 
@@ -8,7 +8,7 @@ LangGraph Platform을 자체 인프라로 대체하세요.
 
 ---
 
-## 왜 LangSmith 대신 Open LangGraph Platform 인가?
+## 왜 LangSmith Deployment 대신 Open LangGraph Platform 을 선택해야할까요?
 
 | 기능                | LangGraph Platform         | Open LangGraph (셀프 호스팅)                               |
 | ---------------------- | -------------------------- | ------------------------------------------------- |
@@ -31,13 +31,13 @@ LangGraph Platform을 자체 인프라로 대체하세요.
 - Agent Protocol 준수: 오픈소스 [Agent Protocol](https://github.com/langchain-ai/agent-protocol) 사양 구현
 - Agent Chat UI 호환: [LangChain의 Agent Chat UI](https://github.com/langchain-ai/agent-chat-ui)와 원활하게 작동
 
-## 빠른 시작 (5분)
+## 빠른 시작
 
 ### 사전 요구사항
 
 - Python 3.13+
-- Docker (PostgreSQL용)
-- uv (Python 패키지 매니저)
+- Docker (PostgreSQL, Redis 등)
+- uv (Python Package Manager)
 
 ### 실행하기
 
@@ -63,7 +63,7 @@ cp .env.example .env
 docker compose up open-langgraph
 ```
 
-### 작동 확인
+### Checks
 
 ```bash
 # 헬스 체크
@@ -73,13 +73,11 @@ curl http://localhost:8000/health
 open http://localhost:8000/docs
 ```
 
-이제 Open LangGraph Platform 로컬의 Docker 환경에서 실행되고 있습니다.
-
-## 호환 UI 툴킷
+## Compatible Web UI Toolkie
 
 Open LangGraph는 LangGraph API를 지원하는 여러 프론트엔드와 호환됩니다.
 
-### Agent Chat UI (Official LangChain's UI)
+### Agent Chat UI (Official LangChain's Chat UI)
 
 설정 예시:
 ```bash
@@ -88,7 +86,6 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_ASSISTANT_ID=agent
 ```
 
-참고 자료:
 - Agent Chat UI GitHub: https://github.com/langchain-ai/agent-chat-ui
 
 ### CopilotKit (AG-UI 프로토콜)
@@ -154,74 +151,8 @@ docker compose up open-langgraph-platform
 - CopilotKit GitHub: https://github.com/CopilotKit/CopilotKit
 - 예제: https://github.com/CopilotKit/canvas-with-langgraph-python
 
-### 커스텀 프론트엔드 연동
 
-표준 LangGraph Platform API를 구현하므로 다음을 지원하는 어떤 클라이언트든 연동 가능합니다:
-- SSE 기반 스트리밍
-- LangGraph SDK 프로토콜
-- Agent Protocol 사양
-
-**빠른 개발 명령어:**
-
-```bash
-# Docker 개발 (권장)
-docker compose up open-langgraph
-
-# 로컬 개발
-docker compose up postgres -d
-python3 scripts/migrate.py upgrade
-python3 run_server.py
-
-# 새로운 마이그레이션 생성
-python3 scripts/migrate.py revision --autogenerate -m "Add new feature"
-```
-
-## 예제 에이전트 실행
-
-이미 익숙한 **동일한 LangGraph Client SDK**를 사용하세요:
-
-```python
-import asyncio
-from langgraph_sdk import get_client
-
-async def main():
-    # 셀프 호스팅 Open LangGraph 인스턴스에 연결
-    client = get_client(url="http://localhost:8000")
-
-    # 어시스턴트 생성 (LangGraph Platform과 동일한 API)
-    assistant = await client.assistants.create(
-        graph_id="agent",
-        if_exists="do_nothing",
-        config={},
-    )
-    assistant_id = assistant["assistant_id"]
-
-    # 스레드 생성
-    thread = await client.threads.create()
-    thread_id = thread["thread_id"]
-
-    # 응답 스트리밍 (LangGraph Platform과 동일)
-    stream = client.runs.stream(
-        thread_id=thread_id,
-        assistant_id=assistant_id,
-        input={
-            "messages": [
-                {"type": "human", "content": [{"type": "text", "text": "hello"}]}
-            ]
-        },
-        stream_mode=["values", "messages-tuple", "custom"],
-        on_disconnect="cancel",
-    )
-
-    async for chunk in stream:
-        print(f"event: {getattr(chunk, 'event', None)}, data: {getattr(chunk, 'data', None)}")
-
-asyncio.run(main())
-```
-
-핵심 포인트: 기존 LangGraph 애플리케이션이 수정 없이 작동합니다.
-
-## 아키텍처
+## Architecture
 
 ```text
 Client → FastAPI → LangGraph SDK → PostgreSQL
@@ -232,7 +163,7 @@ SDK      API    Management      Storage
 
 ### 구성 요소
 
-- **FastAPI**: Agent Protocol 준수 HTTP 레이어
+- **FastAPI**: Agent Protocol 준수하는 HTTP 레이어
 - **LangGraph**: 상태 관리 및 그래프 실행
 - **PostgreSQL**: 지속적인 체크포인트 및 메타데이터
 - **Agent Protocol**: LLM 에이전트 API를 위한 오픈소스 사양
