@@ -148,11 +148,7 @@ class CacheService:
             return assistant.model_dump()
         elif hasattr(assistant, "__dict__"):
             # SQLAlchemy ORM - _sa_instance_state 제외
-            return {
-                k: v
-                for k, v in assistant.__dict__.items()
-                if not k.startswith("_")
-            }
+            return {k: v for k, v in assistant.__dict__.items() if not k.startswith("_")}
         elif isinstance(assistant, dict):
             return assistant
         else:

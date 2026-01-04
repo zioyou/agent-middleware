@@ -52,7 +52,16 @@ from ..core.orm import Thread as ThreadORM
 from ..core.orm import _get_session_maker, get_session
 from ..core.serializers import GeneralSerializer
 from ..core.sse import create_end_event, get_sse_headers
-from ..models import Run, RunCreate, RunStatus, User
+from ..models import (
+    Run,
+    RunBatchItem,
+    RunBatchRequest,
+    RunBatchResponse,
+    RunBatchResultItem,
+    RunCreate,
+    RunStatus,
+    User,
+)
 from ..services.langgraph_service import create_run_config, get_langgraph_service
 from ..services.streaming_service import streaming_service
 from ..utils.assistants import resolve_assistant_id
@@ -149,7 +158,9 @@ def map_command_to_langgraph(cmd: dict[str, Any]) -> Command:
 
     return Command(
         update=update,
-        goto=([it if isinstance(it, str) else Send(it["node"], it["input"]) for it in goto] if goto else None),
+        goto=(
+            [it if isinstance(it, str) else Send(it["node"], it["input"]) for it in goto] if goto else None
+        ),
         resume=cmd.get("resume"),
     )
 
@@ -185,12 +196,16 @@ async def set_thread_status(session: AsyncSession, thread_id: str, status: str) 
         None
     """
     await session.execute(
-        update(ThreadORM).where(ThreadORM.thread_id == thread_id).values(status=status, updated_at=datetime.now(UTC))
+        update(ThreadORM)
+        .where(ThreadORM.thread_id == thread_id)
+        .values(status=status, updated_at=datetime.now(UTC))
     )
     await session.commit()
 
 
-async def update_thread_metadata(session: AsyncSession, thread_id: str, assistant_id: str, graph_id: str) -> None:
+async def update_thread_metadata(
+    session: AsyncSession, thread_id: str, assistant_id: str, graph_id: str
+) -> None:
     """스레드 메타데이터에 어시스턴트 및 그래프 정보 업데이트 (DB 방언 독립적)
 
     스레드 메타데이터에 어시스턴트 ID와 그래프 ID를 추가합니다.
@@ -219,12 +234,16 @@ async def update_thread_metadata(session: AsyncSession, thread_id: str, assistan
     if not thread:
         raise HTTPException(404, f"Thread '{thread_id}' not found for metadata update")
     md = dict(getattr(thread, "metadata_json", {}) or {})
-    md.update({
-        "assistant_id": str(assistant_id),
-        "graph_id": graph_id,
-    })
+    md.update(
+        {
+            "assistant_id": str(assistant_id),
+            "graph_id": graph_id,
+        }
+    )
     await session.execute(
-        update(ThreadORM).where(ThreadORM.thread_id == thread_id).values(metadata_json=md, updated_at=datetime.now(UTC))
+        update(ThreadORM)
+        .where(ThreadORM.thread_id == thread_id)
+        .values(metadata_json=md, updated_at=datetime.now(UTC))
     )
     await session.commit()
 
@@ -283,8 +302,12 @@ async def create_run(
 
     # LangGraph 서비스 가져오기
     langgraph_service = get_langgraph_service()
-    print(f"create_run: scheduling background task run_id={run_id} thread_id={thread_id} user={user.identity}")
-    print(f"[create_run] scheduling background task run_id={run_id} thread_id={thread_id} user={user.identity}")
+    print(
+        f"create_run: scheduling background task run_id={run_id} thread_id={thread_id} user={user.identity}"
+    )
+    print(
+        f"[create_run] scheduling background task run_id={run_id} thread_id={thread_id} user={user.identity}"
+    )
 
     # 어시스턴트 존재 여부를 검증하고 graph_id를 가져옵니다.
     # assistant UUID 대신 graph_id가 제공된 경우, 결정론적으로 매핑하고
@@ -586,7 +609,9 @@ async def get_run(
     # 백그라운드 작업이 업데이트한 최신 데이터를 가져오기 위해 refresh
     await session.refresh(run_orm)
 
-    print(f"[get_run] found run status={run_orm.status} user={user.identity} thread_id={thread_id} run_id={run_id}")
+    print(
+        f"[get_run] found run status={run_orm.status} user={user.identity} thread_id={thread_id} run_id={run_id}"
+    )
     # Pydantic으로 변환
     return Run.model_validate({c.name: getattr(run_orm, c.name) for c in run_orm.__table__.columns})
 
@@ -637,6 +662,143 @@ async def list_runs(
     runs = [Run.model_validate({c.name: getattr(r, c.name) for c in r.__table__.columns}) for r in rows]
     print(f"[list_runs] total={len(runs)} user={user.identity} thread_id={thread_id}")
     return runs
+
+
+@router.post("/runs/batch", response_model=RunBatchResponse)
+async def create_batch_runs(
+    request: RunBatchRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RunBatchResponse:
+    """여러 실행을 동시에 생성 (배치 실행)
+
+    배치 요청으로 여러 스레드에서 여러 실행을 한 번에 생성합니다.
+    각 실행은 독립적으로 처리되며, 개별 실행의 성공/실패가 다른 실행에 영향을 주지 않습니다.
+
+    동작 흐름:
+    1. 각 배치 항목에 대해:
+       - 스레드 존재 여부 및 접근 권한 검증
+       - 어시스턴트 존재 여부 및 그래프 유효성 검증
+       - Run 레코드 생성 및 백그라운드 작업 시작
+    2. 결과 집계 및 반환
+
+    Args:
+        request (RunBatchRequest): 배치 실행 요청 (최대 100개 항목)
+        user (User): 인증된 사용자 (의존성 주입)
+        session (AsyncSession): 데이터베이스 세션 (의존성 주입)
+
+    Returns:
+        RunBatchResponse: 배치 실행 결과 (성공/실패 개수 및 개별 결과)
+
+    참고:
+        - 최대 100개의 실행을 동시에 생성할 수 있습니다
+        - 개별 실행 실패가 전체 배치를 실패시키지 않습니다
+        - 각 실행은 백그라운드에서 비동기로 처리됩니다
+    """
+    langgraph_service = get_langgraph_service()
+    available_graphs = langgraph_service.list_graphs()
+
+    results: list[RunBatchResultItem] = []
+    succeeded = 0
+    failed = 0
+
+    for idx, item in enumerate(request.items):
+        try:
+            thread_stmt = select(ThreadORM).where(
+                ThreadORM.thread_id == item.thread_id,
+                _build_thread_access_filter(user.identity, user.org_id),
+            )
+            thread = await session.scalar(thread_stmt)
+            if not thread:
+                raise HTTPException(404, f"Thread '{item.thread_id}' not found")
+
+            resolved_assistant_id = resolve_assistant_id(str(item.assistant_id), available_graphs)
+            assistant_stmt = select(AssistantORM).where(
+                AssistantORM.assistant_id == resolved_assistant_id,
+            )
+            assistant = await session.scalar(assistant_stmt)
+            if not assistant:
+                raise HTTPException(404, f"Assistant '{item.assistant_id}' not found")
+
+            if assistant.graph_id not in available_graphs:
+                raise HTTPException(404, f"Graph '{assistant.graph_id}' not found for assistant")
+
+            run_id = str(uuid4())
+            now = datetime.now(UTC)
+
+            run_orm = RunORM(
+                run_id=run_id,
+                thread_id=item.thread_id,
+                assistant_id=resolved_assistant_id,
+                org_id=user.org_id,
+                status="pending",
+                input=item.input or {},
+                config=item.config,
+                context=None,
+                user_id=user.identity,
+                created_at=now,
+                updated_at=now,
+                output=None,
+                error_message=None,
+            )
+            session.add(run_orm)
+            await session.commit()
+
+            await set_thread_status(session, item.thread_id, "busy")
+            await update_thread_metadata(session, item.thread_id, assistant.assistant_id, assistant.graph_id)
+
+            task = asyncio.create_task(
+                execute_run_async(
+                    run_id,
+                    item.thread_id,
+                    assistant.graph_id,
+                    item.input or {},
+                    user,
+                    item.config,
+                    None,
+                    DEFAULT_STREAM_MODES,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    False,
+                )
+            )
+            active_runs[run_id] = task
+
+            run = Run(
+                run_id=run_id,
+                thread_id=item.thread_id,
+                assistant_id=resolved_assistant_id,
+                status="pending",
+                input=item.input or {},
+                config=item.config,
+                context=None,
+                user_id=user.identity,
+                created_at=now,
+                updated_at=now,
+                output=None,
+                error_message=None,
+            )
+            results.append(RunBatchResultItem(index=idx, run=run, error=None))
+            succeeded += 1
+
+        except HTTPException as e:
+            results.append(RunBatchResultItem(index=idx, run=None, error=str(e.detail)))
+            failed += 1
+        except Exception as e:
+            logger.error(f"Batch run creation failed for index {idx}: {e}")
+            results.append(RunBatchResultItem(index=idx, run=None, error=str(e)))
+            failed += 1
+
+    return RunBatchResponse(
+        results=results,
+        total=len(request.items),
+        succeeded=succeeded,
+        failed=failed,
+    )
 
 
 @router.patch("/threads/{thread_id}/runs/{run_id}")
@@ -690,7 +852,9 @@ async def update_run(
         await streaming_service.cancel_run(run_id)
         print(f"[update_run] set DB status=cancelled run_id={run_id}")
         await session.execute(
-            update(RunORM).where(RunORM.run_id == str(run_id)).values(status="cancelled", updated_at=datetime.now(UTC))
+            update(RunORM)
+            .where(RunORM.run_id == str(run_id))
+            .values(status="cancelled", updated_at=datetime.now(UTC))
         )
         await session.commit()
         print(f"[update_run] commit done (cancelled) run_id={run_id}")
@@ -941,7 +1105,9 @@ async def cancel_run_endpoint(
         await streaming_service.cancel_run(run_id)
         # 상태를 cancelled로 영속화
         await session.execute(
-            update(RunORM).where(RunORM.run_id == str(run_id)).values(status="cancelled", updated_at=datetime.now(UTC))
+            update(RunORM)
+            .where(RunORM.run_id == str(run_id))
+            .values(status="cancelled", updated_at=datetime.now(UTC))
         )
         await session.commit()
 
@@ -1096,7 +1262,9 @@ async def execute_run_async(
                 interrupt_before if isinstance(interrupt_before, list) else [interrupt_before]
             )
         if interrupt_after is not None:
-            run_config["interrupt_after"] = interrupt_after if isinstance(interrupt_after, list) else [interrupt_after]
+            run_config["interrupt_after"] = (
+                interrupt_after if isinstance(interrupt_after, list) else [interrupt_after]
+            )
 
         # 참고: multitask_strategy는 실행 생성 레벨에서 처리되며, 실행 레벨이 아닙니다
         # 동시 실행 동작을 제어하며, 그래프 실행 동작을 제어하지 않습니다

@@ -19,7 +19,7 @@ install:
 	uv sync --no-dev
 
 dev-install:
-	uv sync
+	uv sync --all-extras
 	@uv run pre-commit install
 	@uv run pre-commit install --hook-type commit-msg
 	@echo ""

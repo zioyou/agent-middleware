@@ -415,9 +415,7 @@ class ThreadCopyRequest(BaseModel):
         - HITL 워크플로우에서 "what-if" 시나리오 테스트에 유용
     """
 
-    checkpoint_id: str | None = Field(
-        None, description="복사할 체크포인트 ID (None이면 최신 상태에서 복사)"
-    )
+    checkpoint_id: str | None = Field(None, description="복사할 체크포인트 ID (None이면 최신 상태에서 복사)")
     metadata: dict[str, Any] | None = Field(
         None, description="새 스레드의 메타데이터 (None이면 원본 메타데이터 복사)"
     )

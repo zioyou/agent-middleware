@@ -29,7 +29,7 @@ from ..models.rate_limit import (
     OrgRateLimitsUpdate,
     OrgUsageStats,
 )
-from ..services.organization_service import organization_service
+from ..services.organization_service import OrganizationService
 from ..services.quota_service import quota_service
 
 logger = logging.getLogger(__name__)
@@ -188,11 +188,11 @@ async def _require_org_membership(
     """
     try:
         # OrganizationService를 사용하여 멤버십 확인
-        member = await organization_service.get_member(
+        org_service = OrganizationService(session)
+        member = await org_service.get_member(
             org_id=org_id,
             user_id=user_id,
             requesting_user_id=user_id,
-            session=session,
         )
         if member is None:
             raise HTTPException(
@@ -226,11 +226,11 @@ async def _require_admin_role(
         HTTPException 404: 조직을 찾을 수 없는 경우
     """
     try:
-        member = await organization_service.get_member(
+        org_service = OrganizationService(session)
+        member = await org_service.get_member(
             org_id=org_id,
             user_id=user_id,
             requesting_user_id=user_id,
-            session=session,
         )
         if member is None:
             raise HTTPException(

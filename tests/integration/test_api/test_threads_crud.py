@@ -258,15 +258,9 @@ class TestSearchThreads:
         app = create_test_app(include_runs=False, include_threads=True)
 
         threads = [
-            _thread_row(
-                "thread-1", status="idle", metadata={"env": "prod", "team": "alpha"}
-            ),
-            _thread_row(
-                "thread-2", status="active", metadata={"env": "dev", "team": "beta"}
-            ),
-            _thread_row(
-                "thread-3", status="idle", metadata={"env": "prod", "team": "beta"}
-            ),
+            _thread_row("thread-1", status="idle", metadata={"env": "prod", "team": "alpha"}),
+            _thread_row("thread-2", status="active", metadata={"env": "dev", "team": "beta"}),
+            _thread_row("thread-3", status="idle", metadata={"env": "prod", "team": "beta"}),
         ]
 
         from tests.fixtures.session_fixtures import ThreadSession
@@ -628,3 +622,100 @@ class TestUpdateThread:
         data = resp.json()
         # Metadata should remain unchanged
         assert data["metadata"]["unchanged"] == "value"
+
+
+class TestCountThreads:
+    """Test POST /threads/count endpoint"""
+
+    def test_count_threads_no_filters(self):
+        """Test counting threads without any filters"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return 5
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post("/threads/count", json={})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 5
+
+    def test_count_threads_with_status_filter(self):
+        """Test counting threads with status filter"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return 3
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post("/threads/count", json={"status": "idle"})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 3
+
+    def test_count_threads_with_metadata_filter(self):
+        """Test counting threads with metadata filter"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return 2
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post("/threads/count", json={"metadata": {"env": "prod"}})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 2
+
+    def test_count_threads_empty_result(self):
+        """Test counting threads returns 0 when no matches"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return None
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post("/threads/count", json={"status": "nonexistent"})
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    def test_count_threads_combined_filters(self):
+        """Test counting threads with status and metadata filters combined"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return 1
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post(
+            "/threads/count",
+            json={"status": "idle", "metadata": {"team": "alpha"}},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_count_threads_no_body(self):
+        """Test counting threads with no request body (None)"""
+        app = create_test_app(include_runs=False, include_threads=True)
+
+        class Session(DummySessionBase):
+            async def scalar(self, _stmt):
+                return 10
+
+        app.dependency_overrides[core_get_session] = override_get_session_dep(Session)
+        client = make_client(app)
+
+        resp = client.post("/threads/count")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 10

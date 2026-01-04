@@ -32,6 +32,7 @@ from typing import Any
 
 from ..core.sse import create_error_event, create_metadata_event
 from ..models import Run
+from ..observability.auto_tracing import TracedService
 from ..utils import extract_event_sequence, generate_event_id
 from .broker import broker_manager
 from .event_converter import EventConverter
@@ -40,7 +41,7 @@ from .event_store import build_sse_event, event_store
 logger = logging.getLogger(__name__)
 
 
-class StreamingService:
+class StreamingService(TracedService):
     """SSE 스트리밍 오케스트레이션 서비스 (LangGraph 호환)
 
     이 클래스는 LangGraph 실행 이벤트를 SSE(Server-Sent Events)로 스트리밍하고,

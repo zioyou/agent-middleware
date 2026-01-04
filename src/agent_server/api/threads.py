@@ -52,6 +52,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel
 from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -535,7 +536,12 @@ async def get_thread_history_post(
             raise HTTPException(422, "Invalid 'checkpoint_ns'; must be a string")
 
         logger.debug(
-            f"history POST: thread_id={thread_id} limit={limit} before={before} subgraphs={subgraphs} checkpoint_ns={checkpoint_ns}"
+            "history POST: thread_id=%s limit=%s before=%s subgraphs=%s checkpoint_ns=%s",
+            thread_id,
+            limit,
+            before,
+            subgraphs,
+            checkpoint_ns,
         )
 
         # 스레드 존재 여부 및 접근 권한 확인 (소유자 또는 조직 멤버)
@@ -622,7 +628,7 @@ async def get_thread_history_get(
     before: str | None = Query(None, description="Return states before this checkpoint ID"),
     subgraphs: bool | None = Query(False, description="Include states from subgraphs"),
     checkpoint_ns: str | None = Query(None, description="Checkpoint namespace"),
-    # Optional metadata filter for parity with POST (use JSON string to avoid FastAPI typing assertion on dict in query)
+    # Optional metadata filter for parity with POST (JSON string to avoid FastAPI dict issue)
     metadata: str | None = Query(None, description="JSON-encoded metadata filter"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -843,6 +849,42 @@ async def search_threads(
     return threads_models
 
 
+class ThreadCountRequest(BaseModel):
+    metadata: dict[str, Any] | None = None
+    status: str | None = None
+
+
+class ThreadCountResponse(BaseModel):
+    count: int
+
+
+@router.post("/threads/count", response_model=ThreadCountResponse)
+async def count_threads(
+    request: ThreadCountRequest | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ThreadCountResponse:
+    from sqlalchemy import func
+
+    stmt = (
+        select(func.count())
+        .select_from(ThreadORM)
+        .where(_build_thread_access_filter(user.identity, user.org_id))
+    )
+
+    if request:
+        if request.status:
+            stmt = stmt.where(ThreadORM.status == request.status)
+
+        if request.metadata:
+            for key, value in request.metadata.items():
+                stmt = stmt.where(ThreadORM.metadata_json[key].as_string() == str(value))
+
+    count = await session.scalar(stmt)
+
+    return ThreadCountResponse(count=count or 0)
+
+
 # ---------------------------------------------------------------------------
 # Agent Protocol v0.2.0: Thread Update 엔드포인트 (SDK threads.update 호환)
 # ---------------------------------------------------------------------------
@@ -933,7 +975,7 @@ async def update_thread(
             thread.ttl_strategy = "delete"
             thread.expires_at = datetime.now(UTC) + timedelta(seconds=request.ttl)
         elif isinstance(request.ttl, dict):
-            # 딕셔너리: {"seconds": N, "strategy": "delete"|"archive"}
+            # TTL dict with seconds (int) and strategy (delete or archive)
             ttl_seconds = request.ttl.get("seconds")
             ttl_strategy = request.ttl.get("strategy", "delete")
 

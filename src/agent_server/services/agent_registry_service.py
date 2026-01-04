@@ -49,6 +49,7 @@ class RegisteredAgent:
         is_healthy: 헬스 체크 상태
         tags: 검색용 태그 (skills에서 추출 + 추가 태그)
     """
+
     graph_id: str
     agent_card: AgentCard
     registered_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -77,6 +78,7 @@ class AgentSearchFilters:
         name_contains: 이름에 포함된 문자열로 필터링
         healthy_only: 건강한 에이전트만 반환
     """
+
     skills: list[str] | None = None
     tags: list[str] | None = None
     capabilities: dict[str, bool] | None = None
@@ -245,10 +247,7 @@ class AgentRegistryService:
             return False
 
         # name_contains 필터
-        if (
-            filters.name_contains
-            and filters.name_contains.lower() not in agent.agent_card.name.lower()
-        ):
+        if filters.name_contains and filters.name_contains.lower() not in agent.agent_card.name.lower():
             return False
 
         # skills 필터 (OR 매칭)

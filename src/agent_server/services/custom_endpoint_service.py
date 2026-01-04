@@ -303,9 +303,7 @@ class CustomEndpointService:
 
         return None, header_value.strip()
 
-    def _enforce_timestamp_tolerance(
-        self, timestamp: str, tolerance_seconds: int | None
-    ) -> None:
+    def _enforce_timestamp_tolerance(self, timestamp: str, tolerance_seconds: int | None) -> None:
         if tolerance_seconds is None:
             return
         try:

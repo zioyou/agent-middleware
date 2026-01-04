@@ -16,9 +16,7 @@ keywords = [
     "agent-protocol",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,6 +41,19 @@ dependencies = [
     "uvicorn>=0.35.0",
     "langfuse>=3.3.4",
     "a2a-sdk[http-server]>=0.3.22",
+    "croniter>=6.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.4",
+    "langgraph-sdk>=0.2.9",
+    "mypy>=1.17.1",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pre-commit>=4.0.0",
+    "bandit[toml]>=1.8.0",
 ]
 
 [project.optional-dependencies]
@@ -52,24 +63,30 @@ redis = [
     "redis>=5.0.0",
     "slowapi>=0.1.9", # Rate limiting with Redis backend
 ]
-
-[project.scripts]
-olg = "olg.cli:app"
+otel = [
+    "opentelemetry-api>=1.38.0",
+    "opentelemetry-sdk>=1.38.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.38.0",
+    "opentelemetry-instrumentation-fastapi>=0.60b0",
+    "opentelemetry-instrumentation-httpx>=0.60b0",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+default-groups = "all"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_server", "src/olg"]
+packages = ["src/agent_server"]
 
 [tool.hatch.build.targets.wheel.sources]
-"src/olg" = "olg"
 "graphs/react_agent" = "react_agent"
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
@@ -111,7 +128,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -157,15 +174,3 @@ skip_covered = false
 
 [tool.coverage.html]
 directory = "htmlcov"
-
-[dependency-groups]
-dev = [
-    "ruff>=0.8.4",
-    "langgraph-sdk>=0.2.9",
-    "mypy>=1.17.1",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "pytest-cov>=6.2.1",
-    "pre-commit>=4.0.0",
-    "bandit[toml]>=1.8.0",
-]

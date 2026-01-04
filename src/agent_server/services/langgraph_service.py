@@ -30,7 +30,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from ..a2a import AgentCardGenerator, is_a2a_compatible
 from ..constants import ASSISTANT_NAMESPACE_UUID
+from ..observability.auto_tracing import TracedService
 from ..observability.langfuse_integration import get_tracing_callbacks
+from ..observability.tracing import trace_function
 
 CompiledGraph = CompiledStateGraph[Any, Any, Any, Any]
 
@@ -40,7 +42,7 @@ class GraphDefinition(TypedDict):
     export_name: str
 
 
-class LangGraphService:
+class LangGraphService(TracedService):
     """LangGraph 그래프 로딩 및 설정 관리 서비스
 
     이 클래스는 open_langgraph.json 설정 파일을 읽어 LangGraph 그래프를 동적으로 로드하고,

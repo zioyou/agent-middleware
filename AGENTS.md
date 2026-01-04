@@ -169,7 +169,15 @@ ROOT/
 │       ├── Observability       → [src/agent_server/observability/AGENTS.md]
 │       │   └── langfuse_integration.py
 │       │
+│       ├── A2A (Agent-to-Agent) → [src/agent_server/a2a/AGENTS.md]
+│       │   ├── detector.py        # Protocol detection
+│       │   ├── converter.py       # Message conversion
+│       │   ├── executor.py        # Remote execution
+│       │   └── card_generator.py  # Agent card generation
+│       │
 │       ├── Middleware          → [src/agent_server/middleware/AGENTS.md]
+│       │   ├── audit.py           # Audit logging
+│       │   ├── rate_limit.py      # Rate limiting
 │       │   └── double_encoded_json.py
 │       │
 │       ├── Utils               → [src/agent_server/utils/AGENTS.md]
@@ -222,7 +230,7 @@ ROOT/
 │   ├── fixtures/             # Test fixtures
 │   └── conftest.py           # pytest configuration
 │
-├── Database
+├── Database              → [alembic/AGENTS.md]
 │   ├── alembic/              # Migration system
 │   │   ├── versions/         # Migration files
 │   │   └── env.py            # Alembic environment config
@@ -584,6 +592,26 @@ engine = db_manager.get_engine()              # Metadata queries
 - Resource authorization (`@auth.on.{resource}.{action}`)
 - Multi-tenant isolation
 
+#### 6. Middleware Layer
+
+**Location:** `src/agent_server/middleware/`
+
+**Responsibilities:**
+
+- Audit logging (Request/Response tracking)
+- Rate limiting (Request throttling and quota management)
+- Double-encoded JSON handling (Frontend compatibility)
+
+#### 7. A2A Protocol
+
+**Location:** `src/agent_server/a2a/`
+
+**Responsibilities:**
+
+- Agent-to-Agent communication implementation
+- Agent card generation and discovery
+- Protocol federation and remote execution management
+
 ### Graph Examples
 
 #### 1. ReAct Agent
@@ -658,7 +686,7 @@ Each directory contains detailed component documentation (`AGENTS.md`):
 
 #### Core Layer (Infrastructure)
 
-- **[src/agent_server/core/AGENTS.md](src/agent_server/core/AGENTS.md)** (Coming soon)
+- **[src/agent_server/core/AGENTS.md](src/agent_server/core/AGENTS.md)** ✅
   - DatabaseManager usage
   - LangGraph integration patterns
   - Authentication system structure
@@ -667,28 +695,47 @@ Each directory contains detailed component documentation (`AGENTS.md`):
 
 #### Service Layer (Business Logic)
 
-- **[src/agent_server/services/AGENTS.md](src/agent_server/services/AGENTS.md)** (Coming soon)
+- **[src/agent_server/services/AGENTS.md](src/agent_server/services/AGENTS.md)** ✅
   - LangGraphService: Graph loading/caching
   - StreamingService: SSE streaming
   - EventStore: Event persistence
   - Broker: Message coordination
   - EventConverter: Format conversion
   - ThreadStateService: State retrieval
+  - **Enterprise Services**: OrganizationService, QuotaService, CacheService
+  - **Federation**: FederationService, RemoteA2AClient
+  - **Agent Auth**: AgentAuthService, JWTVerifier
 
 #### API Layer (HTTP Endpoints)
 
-- **[src/agent_server/api/AGENTS.md](src/agent_server/api/AGENTS.md)** (Coming soon)
+- **[src/agent_server/api/AGENTS.md](src/agent_server/api/AGENTS.md)** ✅
   - /assistants - Assistant CRUD
   - /threads - Thread management
   - /runs - Execution and streaming
   - /store - Long-term memory storage
+  - **Enterprise APIs**: /organizations, /quotas, /audit
+  - **Agent APIs**: /agents, /agent-auth, /runs (standalone)
 
 #### Models (Data Schemas)
 
-- **[src/agent_server/models/AGENTS.md](src/agent_server/models/AGENTS.md)** (Coming soon)
+- **[src/agent_server/models/AGENTS.md](src/agent_server/models/AGENTS.md)** ✅
   - Pydantic model structure
   - Validation rules
   - Type definitions
+
+#### Middleware
+
+- **[src/agent_server/middleware/AGENTS.md](src/agent_server/middleware/AGENTS.md)** ✅
+  - Audit logging middleware
+  - Rate limiting configuration
+  - JSON handling details
+
+#### A2A (Agent-to-Agent)
+
+- **[src/agent_server/a2a/AGENTS.md](src/agent_server/a2a/AGENTS.md)** ✅
+  - A2A Protocol implementation
+  - Agent card specification
+  - Federation and remote execution
 
 #### Agent Graphs (Agent Implementation)
 
@@ -698,23 +745,30 @@ Each directory contains detailed component documentation (`AGENTS.md`):
   - Customization guide
   - Usage examples
 
-- **[graphs/react_agent_hitl/AGENTS.md](graphs/react_agent_hitl/AGENTS.md)** (Coming soon)
+- **[graphs/react_agent_hitl/AGENTS.md](graphs/react_agent_hitl/AGENTS.md)** ✅
   - Human-in-the-Loop pattern
   - interrupt() usage
   - Approval flow
 
-- **[graphs/subgraph_agent/AGENTS.md](graphs/subgraph_agent/AGENTS.md)** (Coming soon)
+- **[graphs/subgraph_agent/AGENTS.md](graphs/subgraph_agent/AGENTS.md)** ✅
   - Subgraph composition
   - Modularization patterns
   - Complex workflows
 
 #### Tests
 
-- **[tests/AGENTS.md](tests/AGENTS.md)** (Coming soon)
+- **[tests/AGENTS.md](tests/AGENTS.md)** ✅
   - Test structure
   - Fixture usage
   - Async testing
   - E2E test writing
+
+#### Database & Infrastructure
+
+- **[alembic/AGENTS.md](alembic/AGENTS.md)** ✅
+  - Database schema overview
+  - Migration workflow
+  - Version history
 
 ### External Resources
 

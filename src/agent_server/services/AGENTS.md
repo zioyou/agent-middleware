@@ -738,3 +738,431 @@ StreamingService.stream_run_execution()
 5. **안정성**: 이벤트 영속화 및 재생으로 재연결 지원
 
 이 계층은 **FastAPI 라우터**와 **데이터베이스/LangGraph** 사이의 중간 계층으로, 코드 유지보수성과 확장성을 크게 향상시킵니다.
+
+---
+
+## 엔터프라이즈 서비스
+
+### 8. `organization_service.py` - 조직 관리 서비스
+
+**역할**: 멀티테넌시를 위한 조직 CRUD 및 멤버십 관리
+
+```python
+from services.organization_service import get_organization_service
+
+service = get_organization_service()
+
+# 조직 생성
+org = await service.create_organization(
+    name="Acme Corp",
+    created_by=user.identity
+)
+
+# 멤버 추가
+await service.add_member(org.org_id, member_user_id, role="member")
+
+# API 키 발급
+api_key = await service.create_api_key(org.org_id, name="Production Key")
+```
+
+**주요 기능**:
+- **조직 CRUD**: 생성, 조회, 수정, 삭제
+- **멤버십 관리**: 멤버 추가/제거, 역할 변경 (owner, admin, member)
+- **API 키 관리**: 조직별 API 키 발급 및 폐기
+- **슬러그 생성**: URL-friendly 조직 식별자 자동 생성
+- **권한 검증**: 역할 기반 접근 제어
+
+**핵심 클래스**:
+- `OrganizationService`: 조직 관리 비즈니스 로직
+- `generate_slug()`: 조직명 → URL 슬러그 변환
+- `generate_api_key()`: 보안 API 키 생성
+
+---
+
+### 9. `quota_service.py` - 할당량 및 Rate Limit 서비스
+
+**역할**: 조직/사용자별 API 호출 제한 및 리소스 할당량 관리
+
+```python
+from services.quota_service import quota_service
+
+# 조직 Rate Limit 조회
+limits = await quota_service.get_org_limits(org_id)
+
+# 할당량 초과 여부 확인
+is_allowed = await quota_service.check_org_quota(org_id, "runs")
+
+# 사용량 증가
+await quota_service.increment_usage(org_id, "runs", count=1)
+
+# 사용량 통계 조회
+stats = await quota_service.get_org_usage_stats(org_id)
+```
+
+**주요 기능**:
+- **Rate Limit 관리**: 시간당/일당 API 호출 제한
+- **할당량 관리**: 스레드, 실행, 저장소 용량 등 리소스 제한
+- **사용량 추적**: Redis 기반 실시간 사용량 카운팅
+- **캐시 지원**: Redis 캐시로 DB 부하 감소
+- **윈도우 관리**: 시간/일 단위 윈도우 자동 초기화
+
+**기본 Rate Limit** (시간당):
+
+| 리소스 타입 | 기본값 |
+|------------|--------|
+| `streaming` | 100 |
+| `runs` | 500 |
+| `write` | 2,000 |
+| `read` | 5,000 |
+
+---
+
+### 10. `agent_registry_service.py` - 에이전트 레지스트리 서비스
+
+**역할**: A2A 프로토콜용 에이전트 등록 및 검색
+
+```python
+from services.agent_registry_service import agent_registry_service
+
+# 에이전트 등록
+await agent_registry_service.register_agent(
+    agent_id="weather-agent",
+    name="Weather Assistant",
+    url="https://example.com/a2a/weather",
+    skills=["weather_lookup", "forecast"]
+)
+
+# 에이전트 검색
+agents = await agent_registry_service.discover_agents(
+    filters=AgentSearchFilters(tags=["weather"], online=True)
+)
+
+# 헬스 업데이트
+await agent_registry_service.update_health(agent_id, is_healthy=True)
+```
+
+**주요 기능**:
+- **에이전트 등록/해제**: 로컬 및 원격 에이전트 등록
+- **태그 기반 검색**: 스킬, 태그 기반 에이전트 발견
+- **헬스 체크**: 에이전트 상태 추적
+- **필터링**: 온라인 여부, 태그, 스킬 등으로 필터링
+
+**핵심 클래스**:
+- `RegisteredAgent`: 등록된 에이전트 정보
+- `AgentSearchFilters`: 검색 필터 조건
+- `AgentRegistryService`: 레지스트리 관리
+
+---
+
+### 11. `audit_outbox_service.py` - 감사 Outbox 서비스
+
+**역할**: Outbox 패턴으로 감사 로그를 안전하게 영속화
+
+```python
+from services.audit_outbox_service import audit_outbox_service
+
+# 감사 로그 삽입 (비동기)
+await audit_outbox_service.insert(
+    user_id="user123",
+    org_id="org456",
+    action="runs.create",
+    resource_type="run",
+    resource_id="run789",
+    request_body={"assistant_id": "agent"},
+    response_status=200,
+    duration_ms=150
+)
+
+# Mover 시작 (백그라운드)
+await audit_outbox_service.start_mover()
+```
+
+**주요 기능**:
+- **Outbox 패턴**: 트랜잭션 안전성 보장
+- **배치 이동**: outbox → audit_logs 테이블로 일괄 이동
+- **재시도 관리**: 실패 시 지수 백오프 재시도
+- **메트릭 수집**: 삽입/이동/실패 카운트 추적
+- **파티션 인식**: 월별 파티션 테이블에 자동 라우팅
+
+**설정 상수**:
+
+| 상수 | 값 | 설명 |
+|------|-----|------|
+| `BATCH_SIZE` | 100 | 배치당 처리 레코드 수 |
+| `MOVE_INTERVAL_SECONDS` | 5 | Mover 실행 주기 |
+| `MAX_RETRY_COUNT` | 3 | 최대 재시도 횟수 |
+
+---
+
+### 12. `thread_cleanup_service.py` - 스레드 정리 서비스
+
+**역할**: TTL 기반 만료 스레드 자동 정리
+
+```python
+from services.thread_cleanup_service import thread_cleanup_service
+
+# 백그라운드 정리 시작
+await thread_cleanup_service.start()
+
+# 즉시 정리 실행
+await thread_cleanup_service.cleanup_now()
+
+# 정리 중지
+await thread_cleanup_service.stop()
+```
+
+**주요 기능**:
+- **TTL 기반 정리**: `expires_at` 시간이 지난 스레드 삭제
+- **백그라운드 실행**: 주기적 정리 작업
+- **CASCADE 삭제**: 관련 실행 기록도 함께 삭제
+- **체크포인트 정리**: LangGraph 체크포인트도 정리
+
+---
+
+### 13. `cache_service.py` - 캐시 서비스
+
+**역할**: Redis/메모리 기반 캐시로 성능 최적화
+
+```python
+from services.cache_service import cache_service
+
+# 어시스턴트 캐시 조회
+assistant = await cache_service.get_assistant_cached(assistant_id)
+
+# 캐시 설정
+await cache_service.set_assistant_cache(assistant_id, assistant_data)
+
+# 캐시 무효화
+await cache_service.invalidate_assistant(assistant_id)
+
+# 사용자별 캐시 무효화
+await cache_service.invalidate_user_assistants(user_id)
+```
+
+**주요 기능**:
+- **어시스턴트 캐시**: 자주 조회되는 어시스턴트 정보 캐싱
+- **스키마 캐시**: 그래프 스키마 캐싱
+- **TTL 관리**: 자동 만료 지원
+- **Graceful Degradation**: Redis 장애 시 패스스루
+
+---
+
+### 14. `base_broker.py` - 브로커 베이스 클래스
+
+**역할**: Producer-Consumer 패턴의 추상 인터페이스 정의
+
+```python
+from services.base_broker import BaseRunBroker, BaseBrokerManager
+
+class MyBroker(BaseRunBroker):
+    async def put(self, event_id: str, payload: Any):
+        # 이벤트 큐에 추가
+        pass
+    
+    async def aiter(self):
+        # 이벤트 스트림 반환
+        pass
+```
+
+**핵심 클래스**:
+- `BaseRunBroker`: 단일 실행의 이벤트 브로커 인터페이스
+- `BaseBrokerManager`: 브로커 생명주기 관리 인터페이스
+
+---
+
+### 15. `partition_service.py` - 파티션 관리 서비스
+
+**역할**: PostgreSQL 월별 파티션 자동 관리
+
+```python
+from services.partition_service import partition_service
+
+# 미래 파티션 생성 (3개월)
+await partition_service.ensure_future_partitions(months_ahead=3)
+
+# 오래된 파티션 정리 (90일 보관)
+await partition_service.cleanup_old_partitions(retention_days=90)
+
+# 파티션 통계 조회
+stats = await partition_service.get_partition_stats()
+```
+
+**주요 기능**:
+- **자동 파티션 생성**: 미래 월별 파티션 사전 생성
+- **파티션 정리**: 보존 기간이 지난 파티션 삭제
+- **통계 조회**: 파티션별 레코드 수 확인
+- **audit_logs 전용**: 감사 로그 테이블 파티션 관리
+
+**설정 상수**:
+
+| 상수 | 값 | 설명 |
+|------|-----|------|
+| `DEFAULT_MONTHS_AHEAD` | 3 | 미리 생성할 파티션 개월 수 |
+| `DEFAULT_RETENTION_DAYS` | 90 | 파티션 보존 기간 |
+
+---
+
+### 16. `custom_endpoint_service.py` - 커스텀 엔드포인트 서비스
+
+**역할**: 사용자 정의 API 엔드포인트 동적 등록
+
+```python
+from services.custom_endpoint_service import get_custom_endpoint_service
+
+service = get_custom_endpoint_service()
+await service.initialize()
+
+# 커스텀 엔드포인트는 open_langgraph.json에서 정의:
+# {
+#   "custom_endpoints": {
+#     "/webhook/github": {
+#       "handler": "./handlers/github.py:handle_webhook",
+#       "method": "POST"
+#     }
+#   }
+# }
+```
+
+**주요 기능**:
+- **동적 라우트 등록**: 설정 파일 기반 엔드포인트 추가
+- **핸들러 로딩**: Python 모듈에서 핸들러 함수 동적 로드
+- **Webhook 검증**: 서명 기반 Webhook 보안
+- **컨텍스트 주입**: 요청 컨텍스트 자동 주입
+
+---
+
+## Federation 서비스 (`federation/`)
+
+### 17. `federation_service.py` - Federation 서비스
+
+**역할**: 여러 Open LangGraph 인스턴스 간 에이전트 연합
+
+```python
+from services.federation import get_federation_service
+
+service = get_federation_service()
+
+# 피어 에이전트 검색
+agents = await service.discover_agents(
+    filters=AgentSearchFilters(tags=["weather"])
+)
+
+# 피어 목록 조회
+peers = await service.list_peers()
+```
+
+**주요 기능**:
+- **피어 검색**: 구성된 피어 서버에서 에이전트 검색
+- **Agent Card 수집**: 원격 에이전트 메타데이터 수집
+- **Circuit Breaker**: 장애 피어 자동 격리
+- **헬스 체크**: 피어 가용성 모니터링
+
+---
+
+### 18. `remote_a2a_client.py` - 원격 A2A 클라이언트
+
+**역할**: 원격 A2A 에이전트와 통신
+
+```python
+from services.federation import RemoteA2AClient
+
+client = RemoteA2AClient(base_url="https://remote-agent.example.com")
+
+# Agent Card 조회
+card = await client.resolve_agent_card()
+
+# 메시지 전송
+response = await client.send_message(message, task_id="task123")
+```
+
+**주요 기능**:
+- **Agent Card 해석**: .well-known/agent-card.json 조회
+- **메시지 전송**: JSON-RPC 메시지 전송
+- **타임아웃 관리**: 요청별 타임아웃 설정
+- **재시도 로직**: 일시적 오류 자동 재시도
+
+---
+
+### 19. `remote_agent_card_service.py` - Agent Card 캐시 서비스
+
+**역할**: 원격 Agent Card 캐싱
+
+```python
+from services.federation import RemoteAgentCardResolver
+
+resolver = RemoteAgentCardResolver()
+
+# 캐시된 Agent Card 조회
+card = await resolver.get_agent_card("https://remote-agent.example.com")
+
+# 캐시 초기화
+resolver.clear_cache()
+```
+
+**주요 기능**:
+- **TTL 캐싱**: Agent Card를 메모리에 캐시
+- **자동 갱신**: TTL 만료 시 자동 재조회
+- **에러 핸들링**: 조회 실패 시 캐시된 값 유지
+
+---
+
+## Agent Auth 서비스 (`agent_auth/`)
+
+### 20. `agent_auth/service.py` - 에이전트 인증 서비스
+
+**역할**: 에이전트 간 인증을 위한 자격 증명 관리
+
+```python
+from services.agent_auth import get_agent_auth_service
+
+service = get_agent_auth_service()
+
+# 에이전트 등록
+agent = await service.register_agent(
+    org_id="org123",
+    name="Weather Agent",
+    scopes=["runs:create", "threads:read"]
+)
+
+# 자격 증명 발급
+credential = await service.create_credential(agent.agent_id)
+```
+
+**주요 기능**:
+- **에이전트 등록**: 조직별 에이전트 ID 발급
+- **자격 증명 관리**: JWT 기반 자격 증명 발급/폐기
+- **스코프 관리**: 에이전트별 권한 범위 정의
+- **역할 기반 접근**: 조직 역할에 따른 관리 권한
+
+---
+
+### 21. `agent_auth/jwt_verifier.py` - JWT 검증기
+
+**역할**: 에이전트 JWT 토큰 검증
+
+```python
+from services.agent_auth import AgentJWTVerifier
+
+verifier = AgentJWTVerifier(secret_key="your-secret")
+
+# JWT 검증
+claims = await verifier.verify(token)
+print(claims.agent_id)
+print(claims.scopes)
+```
+
+**주요 기능**:
+- **JWT 검증**: 서명 및 만료 검증
+- **클레임 추출**: agent_id, scopes, org_id 추출
+- **스코프 정규화**: 권한 범위 표준화
+- **에러 타입**: 검증 실패 시 상세 에러 제공
+
+---
+
+## 관련 문서
+
+- **[API Layer](../api/AGENTS.md)** - API 엔드포인트 가이드
+- **[Core Layer](../core/AGENTS.md)** - 인프라 컴포넌트 가이드
+- **[Middleware Layer](../middleware/AGENTS.md)** - 미들웨어 가이드
+- **[A2A Layer](../a2a/AGENTS.md)** - A2A 프로토콜 통합 가이드
+- **[Alembic](../../../alembic/AGENTS.md)** - 데이터베이스 마이그레이션 가이드

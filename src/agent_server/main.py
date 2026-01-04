@@ -78,8 +78,12 @@ from .api.agent_auth import router as agent_auth_router
 from .api.agents import router as agents_router
 from .api.assistants import router as assistants_router
 from .api.audit import router as audit_router
+from .api.crons import router as crons_router
+from .api.feature_flags import router as feature_flags_router
 from .api.organizations import router as organizations_router
 from .api.quotas import router as quotas_router
+from .api.rate_limit_rules import router as rate_limit_rules_router
+from .api.rbac import router as rbac_router
 from .api.runs import router as runs_router
 from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
@@ -104,7 +108,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: C901
     """FastAPI 애플리케이션 수명 주기(lifespan) 관리 컨텍스트 매니저
 
     애플리케이션 시작 시 필요한 모든 초기화 작업을 수행하고,
@@ -156,6 +160,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         - 비동기 컨텍스트 매니저로 예외 안전성 보장
     """
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Startup: OpenTelemetry 초기화 (가장 먼저 실행)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # OpenTelemetry는 다른 컴포넌트 초기화 전에 설정해야 모든 요청이 추적됨
+    from .observability.otel_integration import setup_opentelemetry
+
+    setup_opentelemetry(_app)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Startup: 데이터베이스 및 LangGraph 컴포넌트 초기화
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     await db_manager.initialize()
@@ -192,6 +204,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await thread_cleanup_service.start()
 
+    # Cron 스케줄러 서비스 시작
+    # 60초마다 예약된 cron 작업 확인 및 실행
+    from .services.cron_scheduler_service import cron_scheduler_service
+
+    await cron_scheduler_service.start()
+
     # 감사 로그 Outbox 배치 이동 작업 시작
     # outbox 테이블에서 파티션 테이블로 주기적으로 이동
     from .services.audit_outbox_service import audit_outbox_service
@@ -219,6 +237,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if not task.done():
             task.cancel()
 
+    # OpenTelemetry 종료 (남은 span 플러시)
+    from .observability.otel_integration import shutdown_opentelemetry
+
+    shutdown_opentelemetry()
+
     # 감사 로그 Outbox 배치 이동 작업 중지 (남은 레코드 플러시)
     await audit_outbox_service.stop_mover()
 
@@ -227,6 +250,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # TTL 스레드 정리 작업 중지
     await thread_cleanup_service.stop()
+
+    # Cron 스케줄러 서비스 중지
+    await cron_scheduler_service.stop()
 
     # Rate Limiter 정리
     await rate_limiter.close()
@@ -322,6 +348,10 @@ app.include_router(runs_standalone_router, prefix="", tags=["Runs (Standalone)"]
 # Agent Protocol v0.2.0: /store/namespaces 엔드포인트 포함
 app.include_router(store_router, prefix="", tags=["Store"])
 
+# /crons - 스케줄된 실행(Cron) 관리
+# 정기적인 에이전트 실행을 위한 스케줄링 기능
+app.include_router(crons_router, prefix="", tags=["Crons"])
+
 # /organizations - 조직 기반 멀티테넌시 관리
 # 조직 CRUD, 멤버십 관리, API 키 관리
 # 역할 계층 (RBAC): OWNER, ADMIN, MEMBER, VIEWER
@@ -330,6 +360,18 @@ app.include_router(organizations_router, prefix="", tags=["Organizations"])
 # /organizations/{org_id}/quotas - 조직 쿼터 및 Rate Limit 관리
 # 사용량 조회 (MEMBER+), 제한 변경 (ADMIN+)
 app.include_router(quotas_router, prefix="", tags=["Quotas"])
+
+# /organizations/{org_id}/rate-limits - DB-controlled Rate Limit 규칙 관리
+# 규칙 조회 (MEMBER+), 규칙 생성/수정/삭제 (ADMIN+)
+app.include_router(rate_limit_rules_router, prefix="", tags=["Rate Limits"])
+
+# /organizations/{org_id}/rbac - 역할 기반 접근 제어 관리
+# 역할/권한 조회 (MEMBER+), 역할/권한 변경 (ADMIN+)
+app.include_router(rbac_router, prefix="", tags=["RBAC"])
+
+# /organizations/{org_id}/feature-flags - 기능 플래그 관리
+# 플래그 조회 (MEMBER+), 플래그 생성/수정/삭제 (ADMIN+)
+app.include_router(feature_flags_router, prefix="", tags=["Feature Flags"])
 
 # /organizations/{org_id}/agents - 에이전트 신원 및 자격 증명 관리
 app.include_router(agent_auth_router, prefix="", tags=["Agent Auth"])

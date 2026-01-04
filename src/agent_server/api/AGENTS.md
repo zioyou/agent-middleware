@@ -838,6 +838,307 @@ return StreamingResponse(
 
 ---
 
-**작성일**: 2025-10-27
+---
+
+## 추가 API 엔드포인트 (Enterprise)
+
+### 5. `agents.py` - 에이전트 발견 엔드포인트
+
+**역할**: A2A 프로토콜 호환 에이전트 검색 및 조회 API
+
+**주요 기능**:
+- 로컬 어시스턴트를 A2A Agent 형식으로 변환
+- 에이전트 검색 및 필터링
+- 원격 에이전트 연합 검색 (Federation)
+- 그래프 스키마 조회
+
+**핵심 엔드포인트**:
+- `POST /agents` - 에이전트 생성 (어시스턴트 생성과 동일)
+- `GET /agents` - 에이전트 목록 조회
+- `POST /agents/search` - 에이전트 검색
+- `POST /agents/discover` - Federation 에이전트 발견
+- `GET /agents/{agent_id}` - 특정 에이전트 조회
+- `GET /agents/{agent_id}/schemas` - 그래프 스키마 조회
+
+**특징**:
+- **A2A 호환**: Agent Protocol의 Agent 형식으로 응답
+- **Federation 지원**: 구성된 피어 서버에서 에이전트 검색
+- **어시스턴트 매핑**: 내부 어시스턴트를 A2A Agent로 변환
+
+---
+
+### 6. `agent_auth.py` - 에이전트 인증 엔드포인트
+
+**역할**: 에이전트 간 인증을 위한 자격 증명 관리 API
+
+**주요 기능**:
+- 에이전트 ID 등록
+- JWT 기반 자격 증명 발급
+- 자격 증명 폐기
+- 스코프 기반 권한 관리
+
+**핵심 엔드포인트**:
+- `POST /agent-auth/agents` - 에이전트 등록
+- `GET /agent-auth/agents` - 등록된 에이전트 목록
+- `POST /agent-auth/agents/{agent_id}/credentials` - 자격 증명 발급
+- `DELETE /agent-auth/credentials/{credential_id}` - 자격 증명 폐기
+
+**사용 예제**:
+
+```bash
+# 에이전트 등록
+curl -X POST http://localhost:8000/agent-auth/agents \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Weather Agent",
+    "scopes": ["runs:create", "threads:read"]
+  }'
+
+# 자격 증명 발급
+curl -X POST http://localhost:8000/agent-auth/agents/{agent_id}/credentials \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Credential",
+    "expires_in": 86400
+  }'
+```
+
+---
+
+### 7. `organizations.py` - 조직 관리 엔드포인트
+
+**역할**: 멀티테넌시를 위한 조직 CRUD 및 멤버십 관리 API
+
+**주요 기능**:
+- 조직 생성, 조회, 수정, 삭제
+- 조직 멤버 관리 (추가, 제거, 역할 변경)
+- 조직 API 키 발급 및 관리
+- 슬러그 기반 조직 조회
+
+**핵심 엔드포인트**:
+- `POST /organizations` - 조직 생성
+- `GET /organizations` - 사용자가 속한 조직 목록
+- `GET /organizations/{org_id}` - 조직 상세 조회
+- `GET /organizations/slug/{slug}` - 슬러그로 조직 조회
+- `PATCH /organizations/{org_id}` - 조직 정보 수정
+- `DELETE /organizations/{org_id}` - 조직 삭제
+- `GET /organizations/{org_id}/members` - 멤버 목록
+- `POST /organizations/{org_id}/members` - 멤버 추가
+- `PATCH /organizations/{org_id}/members/{user_id}` - 멤버 역할 변경
+- `DELETE /organizations/{org_id}/members/{user_id}` - 멤버 제거
+- `GET /organizations/{org_id}/api-keys` - API 키 목록
+- `POST /organizations/{org_id}/api-keys` - API 키 생성
+- `DELETE /organizations/{org_id}/api-keys/{key_id}` - API 키 폐기
+
+**역할 체계**:
+
+| 역할 | 권한 |
+|------|------|
+| `owner` | 모든 권한 (조직 삭제, 소유권 이전 포함) |
+| `admin` | 멤버 관리, API 키 관리 |
+| `member` | 리소스 읽기/쓰기 |
+
+**사용 예제**:
+
+```bash
+# 조직 생성
+curl -X POST http://localhost:8000/organizations \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corporation",
+    "display_name": "Acme Corp"
+  }'
+
+# 멤버 추가
+curl -X POST http://localhost:8000/organizations/{org_id}/members \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "user123",
+    "role": "member"
+  }'
+```
+
+---
+
+### 8. `audit.py` - 감사 로그 엔드포인트
+
+**역할**: 조직별 API 활동 감사 로그 조회 및 분석 API
+
+**주요 기능**:
+- 감사 로그 목록 조회 (페이지네이션)
+- 시간 범위 필터링
+- 액션/리소스 타입별 필터링
+- 통계 요약 조회
+- CSV/JSON 내보내기
+
+**핵심 엔드포인트**:
+- `GET /audit/logs` - 감사 로그 목록
+- `GET /audit/summary` - 통계 요약
+- `GET /audit/export` - CSV/JSON 내보내기
+
+**쿼리 파라미터**:
+
+| 파라미터 | 설명 |
+|----------|------|
+| `start_time` | 시작 시간 (ISO 8601) |
+| `end_time` | 종료 시간 (ISO 8601) |
+| `action` | 액션 필터 (예: `runs.create`) |
+| `resource_type` | 리소스 타입 (예: `run`, `thread`) |
+| `user_id` | 사용자 ID 필터 |
+| `limit` | 페이지 크기 (기본: 50) |
+| `offset` | 오프셋 |
+
+**사용 예제**:
+
+```bash
+# 감사 로그 조회
+curl -X GET "http://localhost:8000/audit/logs?start_time=2026-01-01T00:00:00Z&action=runs.create&limit=100" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-Org-ID: org123"
+
+# 통계 요약
+curl -X GET "http://localhost:8000/audit/summary?group_by=action" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-Org-ID: org123"
+
+# CSV 내보내기
+curl -X GET "http://localhost:8000/audit/export?format=csv&start_time=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-Org-ID: org123" \
+  -o audit_logs.csv
+```
+
+---
+
+### 9. `quotas.py` - 할당량 관리 엔드포인트
+
+**역할**: 조직별 Rate Limit 및 리소스 할당량 조회/관리 API
+
+**주요 기능**:
+- 조직 Rate Limit 조회
+- 현재 사용량 조회
+- Rate Limit 설정 변경 (관리자)
+- 할당량 초과 여부 확인
+
+**핵심 엔드포인트**:
+- `GET /quotas` - 조직 할당량 및 Rate Limit 조회
+- `GET /quotas/usage` - 현재 사용량 조회
+- `PATCH /quotas` - Rate Limit 설정 변경
+
+**응답 예시**:
+
+```json
+{
+  "org_id": "org123",
+  "rate_limits": {
+    "streaming_per_hour": 100,
+    "runs_per_hour": 500,
+    "write_per_hour": 2000,
+    "read_per_hour": 5000
+  },
+  "quotas": {
+    "max_threads": 10000,
+    "max_assistants": 100,
+    "max_store_items": 100000
+  },
+  "usage": {
+    "runs_this_hour": 42,
+    "streaming_this_hour": 5,
+    "threads_total": 1234,
+    "assistants_total": 15
+  }
+}
+```
+
+**사용 예제**:
+
+```bash
+# 할당량 조회
+curl -X GET http://localhost:8000/quotas \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-Org-ID: org123"
+
+# Rate Limit 변경 (관리자)
+curl -X PATCH http://localhost:8000/quotas \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-Org-ID: org123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "streaming_per_hour": 200,
+    "runs_per_hour": 1000
+  }'
+```
+
+---
+
+### 10. `runs_standalone.py` - 독립 실행 엔드포인트
+
+**역할**: 스레드 없이 단일 실행을 생성/관리하는 API
+
+**주요 기능**:
+- 스레드 없이 즉시 실행 생성
+- 실행 완료 대기 (wait)
+- 실행 스트리밍
+- 실행 검색
+
+**핵심 엔드포인트**:
+- `POST /runs` - 독립 실행 생성 (백그라운드)
+- `POST /runs/wait` - 실행 생성 및 완료 대기
+- `POST /runs/stream` - 실행 생성 및 스트리밍
+- `POST /runs/search` - 실행 검색
+- `GET /runs/{run_id}` - 실행 조회
+- `DELETE /runs/{run_id}` - 실행 삭제
+- `GET /runs/{run_id}/wait` - 실행 완료 대기
+- `GET /runs/{run_id}/stream` - 실행 스트리밍
+- `POST /runs/{run_id}/cancel` - 실행 취소
+
+**특징**:
+- **스레드 자동 생성**: 실행 시 임시 스레드 자동 생성
+- **일회성 실행**: 대화 컨텍스트 없는 단일 호출
+- **스레드 API 호환**: 응답 형식은 스레드 기반 실행과 동일
+
+**사용 예제**:
+
+```bash
+# 독립 실행 생성 및 완료 대기
+curl -X POST http://localhost:8000/runs/wait \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant_id": "weather_agent",
+    "input": {
+      "messages": [{"role": "user", "content": "서울 날씨"}]
+    }
+  }'
+
+# 독립 실행 스트리밍
+curl -N -X POST http://localhost:8000/runs/stream \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant_id": "weather_agent",
+    "input": {
+      "messages": [{"role": "user", "content": "서울 날씨"}]
+    }
+  }'
+```
+
+---
+
+## 관련 문서
+
+- **[Services Layer](../services/AGENTS.md)** - 서비스 레이어 가이드
+- **[Core Layer](../core/AGENTS.md)** - 코어 레이어 가이드
+- **[Models](../models/AGENTS.md)** - Pydantic 모델 가이드
+- **[Middleware Layer](../middleware/AGENTS.md)** - 미들웨어 가이드
+- **[A2A Layer](../a2a/AGENTS.md)** - A2A 프로토콜 통합 가이드
+
+---
+
+**작성일**: 2025-10-27 (2026-01-04 업데이트)
 **작성자**: Agent 3 (AGENTS.md 문서화 전담)
-**버전**: 1.0.0
+**버전**: 1.1.0

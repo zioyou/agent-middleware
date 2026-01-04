@@ -36,6 +36,7 @@ from ..core.orm import Assistant as AssistantORM
 from ..core.orm import AssistantVersion as AssistantVersionORM
 from ..core.orm import get_session
 from ..models import Assistant, AssistantCreate, AssistantSearchRequest, AssistantUpdate
+from ..observability.auto_tracing import TracedService
 from ..services.cache_service import cache_service
 from ..services.langgraph_service import LangGraphService, get_langgraph_service
 
@@ -241,7 +242,7 @@ def _extract_graph_schemas(graph: CompiledGraph) -> dict[str, Any]:
     }
 
 
-class AssistantService:
+class AssistantService(TracedService):
     """어시스턴트 관리 서비스
 
     어시스턴트의 생성, 조회, 수정, 삭제(CRUD) 및 버전 관리를 담당하는 서비스입니다.
@@ -504,9 +505,7 @@ class AssistantService:
             int: 필터 조건을 만족하는 어시스턴트 총 개수
         """
         stmt = (
-            select(func.count())
-            .select_from(AssistantORM)
-            .where(_build_access_filter(user_identity, org_id))
+            select(func.count()).select_from(AssistantORM).where(_build_access_filter(user_identity, org_id))
         )
 
         # search_assistants()와 동일한 필터 적용

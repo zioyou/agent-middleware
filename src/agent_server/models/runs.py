@@ -322,3 +322,109 @@ class RunWaitResponse(BaseModel):
     status: str = Field(..., description="최종 상태 (completed, failed, cancelled)")
     output: dict[str, Any] | None = Field(None, description="실행 결과 (완료 시)")
     error: str | None = Field(None, description="오류 메시지 (실패 시)")
+
+
+# ---------------------------------------------------------------------------
+# Batch Run API Models
+# ---------------------------------------------------------------------------
+
+
+class RunBatchItem(BaseModel):
+    """배치 실행 내 개별 실행 요청 모델
+
+    배치 실행의 각 항목을 정의합니다. 각 항목은 독립적인 스레드에서 실행됩니다.
+
+    필드:
+    - thread_id: 실행할 스레드 ID (필수)
+    - assistant_id: 실행할 어시스턴트 ID (필수)
+    - input: 그래프 실행에 전달할 입력 데이터
+    - config: LangGraph 실행 설정
+    - metadata: 실행 메타데이터
+
+    사용 예:
+        item = RunBatchItem(
+            thread_id="thread_123",
+            assistant_id="weather_agent",
+            input={"messages": [{"role": "user", "content": "서울 날씨"}]}
+        )
+    """
+
+    thread_id: str = Field(..., description="실행할 스레드 ID")
+    assistant_id: str = Field(..., description="실행할 어시스턴트(그래프) ID")
+    input: dict[str, Any] | None = Field(None, description="그래프 실행에 전달할 입력 데이터")
+    config: dict[str, Any] | None = Field(
+        None, description="LangGraph 실행 설정 (타임아웃, 재귀 깊이 제한 등)"
+    )
+    metadata: dict[str, Any] | None = Field(None, description="실행 메타데이터")
+
+
+class RunBatchRequest(BaseModel):
+    """배치 실행 요청 모델
+
+    여러 실행을 동시에 생성하기 위한 요청 모델입니다.
+    각 실행은 별도의 스레드에서 병렬로 처리됩니다.
+
+    제한사항:
+    - 최대 100개의 실행까지 배치 처리 가능
+
+    필드:
+    - items: 개별 실행 요청 목록 (1~100개)
+
+    사용 예:
+        request = RunBatchRequest(
+            items=[
+                RunBatchItem(thread_id="t1", assistant_id="agent", input={...}),
+                RunBatchItem(thread_id="t2", assistant_id="agent", input={...}),
+            ]
+        )
+    """
+
+    items: list[RunBatchItem] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="배치 실행할 개별 요청 목록 (최대 100개)",
+    )
+
+
+class RunBatchResultItem(BaseModel):
+    """배치 실행 결과 내 개별 항목 모델
+
+    배치 실행의 각 항목에 대한 결과를 표현합니다.
+
+    필드:
+    - index: 요청 배열 내 인덱스
+    - run: 생성된 실행 정보 (성공 시)
+    - error: 오류 메시지 (실패 시)
+    """
+
+    index: int = Field(..., description="요청 배열 내 인덱스 (0-based)")
+    run: Run | None = Field(None, description="생성된 실행 정보 (성공 시)")
+    error: str | None = Field(None, description="오류 메시지 (실패 시)")
+
+
+class RunBatchResponse(BaseModel):
+    """배치 실행 응답 모델
+
+    배치 실행 요청의 결과를 반환합니다.
+    각 실행의 성공/실패 여부를 개별적으로 포함합니다.
+
+    필드:
+    - results: 개별 실행 결과 목록
+    - total: 요청된 총 실행 수
+    - succeeded: 성공한 실행 수
+    - failed: 실패한 실행 수
+
+    사용 예:
+        response = RunBatchResponse(
+            results=[...],
+            total=10,
+            succeeded=9,
+            failed=1
+        )
+    """
+
+    results: list[RunBatchResultItem] = Field(..., description="개별 실행 결과 목록")
+    total: int = Field(..., description="요청된 총 실행 수")
+    succeeded: int = Field(..., description="성공한 실행 수")
+    failed: int = Field(..., description="실패한 실행 수")

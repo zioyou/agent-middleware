@@ -50,7 +50,7 @@ git clone https://github.com/HyunjunJeon/open-langgraph-platform.git
 cd open-langgraph
 
 # 환경 및 의존성 동기화
-uv sync
+uv sync --all-extras
 
 # 환경 활성화
 source .venv/bin/activate  # Mac/Linux

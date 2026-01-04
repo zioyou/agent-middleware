@@ -42,13 +42,15 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .rls import clear_rls_context, set_rls_context
+
 
 class Base(DeclarativeBase):
     """Declarative base class for all ORM models."""
@@ -83,18 +85,12 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text)
-    settings: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, server_default=text("'{}'::jsonb")
-    )
+    settings: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     metadata_dict: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb"), name="metadata"
     )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
     __table_args__ = (
         Index("idx_organization_slug", "slug", unique=True),
@@ -119,18 +115,14 @@ class OrganizationMember(Base):
 
     __tablename__ = "organization_member"
 
-    id: Mapped[str] = mapped_column(
-        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
-    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
     org_id: Mapped[str] = mapped_column(
         Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'member'"))
     invited_by: Mapped[str | None] = mapped_column(Text)
-    joined_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
+    joined_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
     __table_args__ = (
         Index("idx_org_member_org_id", "org_id"),
@@ -164,15 +156,11 @@ class APIKey(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     key_hash: Mapped[str] = mapped_column(Text, nullable=False)
     key_prefix: Mapped[str] = mapped_column(Text, nullable=False)
-    scopes: Mapped[list[str]] = mapped_column(
-        JSONB, server_default=text("'[]'::jsonb")
-    )
+    scopes: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     __table_args__ = (
@@ -196,25 +184,17 @@ class AgentIdentity(Base):
 
     __tablename__ = "agent_identity"
 
-    id: Mapped[str] = mapped_column(
-        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
-    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
     org_id: Mapped[str] = mapped_column(
         Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'")
-    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     metadata_dict: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb"), name="metadata"
     )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
     __table_args__ = (
         Index("idx_agent_identity_org_id", "org_id"),
@@ -231,20 +211,14 @@ class AgentCredential(Base):
 
     __tablename__ = "agent_credential"
 
-    id: Mapped[str] = mapped_column(
-        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
-    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
     agent_id: Mapped[str] = mapped_column(
         Text, ForeignKey("agent_identity.id", ondelete="CASCADE"), nullable=False
     )
     credential_type: Mapped[str] = mapped_column(Text, nullable=False)
-    credential_data: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, server_default=text("'{}'::jsonb")
-    )
+    credential_data: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()")
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
@@ -252,6 +226,446 @@ class AgentCredential(Base):
         Index("idx_agent_credential_agent_id", "agent_id"),
         Index("idx_agent_credential_fingerprint", "fingerprint", unique=True),
         Index("idx_agent_credential_type", "credential_type"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# RBAC (Role-Based Access Control) Models
+# ---------------------------------------------------------------------------
+
+
+class RoleDefinition(Base):
+    """역할 정의 ORM 모델
+
+    조직 내에서 사용자에게 할당할 수 있는 역할을 정의합니다.
+    각 역할은 권한 문자열 목록을 가지며, 권한 검사에 사용됩니다.
+
+    시스템 역할 (is_system=True):
+    - owner: 전체 권한 ("*")
+    - admin: 멤버/설정 관리 권한
+    - developer: AI 에이전트 및 워크플로우 관리
+    - viewer: 읽기 전용 접근
+    - api_user: 제한된 API 접근
+
+    주요 필드:
+    - id: 고유 식별자 (UUID, DB에서 자동 생성)
+    - org_id: 소속 조직 (NULL이면 시스템 역할)
+    - name: 역할 이름 (조직 내 고유)
+    - display_name: 표시용 이름
+    - description: 역할 설명
+    - permissions: 권한 문자열 배열 (예: ["assistants:read", "threads:*"])
+    - is_system: 시스템 역할 여부 (시스템 역할은 삭제/수정 불가)
+    - priority: 우선순위 (높을수록 더 많은 권한)
+    """
+
+    __tablename__ = "role_definitions"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
+    org_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    permissions: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default=text("'{}'::text[]"), nullable=False
+    )
+    is_system: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, server_default=text("0"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_role_org_name"),
+        Index("idx_role_definitions_org_id", "org_id"),
+        Index("idx_role_definitions_name", "name"),
+        Index("idx_role_definitions_is_system", "is_system"),
+    )
+
+
+class UserCustomPermissions(Base):
+    """사용자 커스텀 권한 ORM 모델
+
+    역할 기반 권한 외에 사용자에게 개별적으로 부여/거부하는 권한을 관리합니다.
+    denied_permissions는 granted_permissions와 역할 권한을 모두 오버라이드합니다.
+
+    권한 해결 순서:
+    1. 사용자의 역할 권한 가져오기
+    2. granted_permissions 추가
+    3. denied_permissions 제거 (최종 오버라이드)
+
+    주요 필드:
+    - id: 고유 식별자 (UUID, DB에서 자동 생성)
+    - user_id: 사용자 ID
+    - org_id: 소속 조직
+    - granted_permissions: 추가로 부여된 권한 배열
+    - denied_permissions: 명시적으로 거부된 권한 배열 (오버라이드)
+    - granted_by: 권한을 부여한 사용자 ID
+    - granted_at: 권한 부여 시간
+    - expires_at: 권한 만료 시간 (선택적)
+    - reason: 권한 부여/거부 사유
+    """
+
+    __tablename__ = "user_custom_permissions"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    granted_permissions: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default=text("'{}'::text[]"), nullable=False
+    )
+    denied_permissions: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default=text("'{}'::text[]"), nullable=False
+    )
+    granted_by: Mapped[str | None] = mapped_column(Text)
+    granted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "org_id", name="uq_user_org_custom_perms"),
+        Index("idx_user_custom_perms_user_org", "user_id", "org_id"),
+        Index("idx_user_custom_perms_org_id", "org_id"),
+        # Partial index for non-expired permissions
+        Index(
+            "idx_user_custom_perms_active",
+            "user_id",
+            "org_id",
+            postgresql_where=text("expires_at IS NULL OR expires_at > NOW()"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiting Models (DB-Controlled)
+# ---------------------------------------------------------------------------
+
+
+class RateLimitRule(Base):
+    """Rate Limit 규칙 ORM 모델
+
+    DB 기반의 동적 rate limiting 규칙을 정의합니다.
+    환경 변수 기반 설정(core/rate_limiter.py)과 달리,
+    조직/사용자/엔드포인트별 세밀한 제어가 가능합니다.
+
+    규칙 우선순위 (priority):
+    - global=0: 시스템 전체 기본값
+    - org=100: 조직 수준
+    - endpoint=200: 엔드포인트 패턴
+    - user=300: 특정 사용자
+    - api_key=400: 특정 API 키
+
+    주요 필드:
+    - rule_id: 고유 식별자 (UUID, DB 자동 생성)
+    - org_id: 소속 조직 (FK)
+    - name: 규칙 이름
+    - target_type: 적용 대상 유형 (global/org/user/api_key/endpoint)
+    - target_id: 대상 식별자 (user_id, api_key_id 등)
+    - endpoint_pattern: 엔드포인트 패턴 (glob 지원: /runs/*, /threads/*/runs)
+    - requests_per_window: 윈도우당 최대 요청 수
+    - window_size: 시간 윈도우 (second/minute/hour/day)
+    - burst_limit: 버스트 제한 (선택적)
+    - action: 초과 시 행동 (reject/throttle/log_only)
+    - priority: 규칙 우선순위 (높을수록 우선)
+    """
+
+    __tablename__ = "rate_limit_rules"
+
+    rule_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[str | None] = mapped_column(Text)
+    endpoint_pattern: Mapped[str | None] = mapped_column(Text)
+    requests_per_window: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_size: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'hour'"))
+    burst_limit: Mapped[int | None] = mapped_column(Integer)
+    burst_window: Mapped[str | None] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'reject'"))
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+    created_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_rate_limit_rule_org_name"),
+        Index("idx_rate_limit_rules_org_id", "org_id"),
+        Index("idx_rate_limit_rules_target", "org_id", "target_type", "target_id"),
+        Index("idx_rate_limit_rules_enabled", "org_id", "enabled"),
+        Index("idx_rate_limit_rules_priority", "org_id", "priority"),
+        Index(
+            "idx_rate_limit_rules_active",
+            "org_id",
+            "enabled",
+            postgresql_where=text("enabled = true AND (expires_at IS NULL OR expires_at > NOW())"),
+        ),
+    )
+
+
+class RateLimitHistory(Base):
+    """Rate Limit 이력 ORM 모델
+
+    rate limit 체크 결과와 위반 사항을 기록합니다.
+    분석 및 모니터링에 활용됩니다.
+
+    레코드 유형:
+    - hit: 정상 체크 (allowed=true)
+    - violation: 제한 초과 (allowed=false)
+
+    집계를 위한 인덱스:
+    - (org_id, timestamp): 조직별 시간순 조회
+    - (rule_id, timestamp): 규칙별 시간순 조회
+    - (org_id, user_id, timestamp): 사용자별 조회
+
+    보존 정책:
+    - 기본 30일 보존 (설정 가능)
+    - 파티셔닝은 선택적 (대용량 시)
+    """
+
+    __tablename__ = "rate_limit_history"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
+    org_id: Mapped[str] = mapped_column(Text, nullable=False)
+    rule_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("rate_limit_rules.rule_id", ondelete="SET NULL")
+    )
+    rule_name: Mapped[str | None] = mapped_column(Text)
+    timestamp: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    user_id: Mapped[str | None] = mapped_column(Text)
+    api_key_id: Mapped[str | None] = mapped_column(Text)
+    endpoint: Mapped[str | None] = mapped_column(Text)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    current_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    limit_value: Mapped[int] = mapped_column(Integer, nullable=False, name="limit")
+    action_taken: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("idx_rate_limit_history_org_ts", "org_id", "timestamp"),
+        Index("idx_rate_limit_history_rule_ts", "rule_id", "timestamp"),
+        Index("idx_rate_limit_history_user_ts", "org_id", "user_id", "timestamp"),
+        Index(
+            "idx_rate_limit_history_violations",
+            "org_id",
+            "timestamp",
+            postgresql_where=text("allowed = false"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feature Flags Models
+# ---------------------------------------------------------------------------
+
+
+class FeatureFlag(Base):
+    """Feature Flag ORM 모델
+
+    동적 기능 토글을 위한 기능 플래그를 정의합니다.
+    점진적 롤아웃, A/B 테스트, 킬스위치 등을 지원합니다.
+
+    플래그 상태:
+    - active: 플래그가 활성화되어 평가됨
+    - disabled: 비활성화 (기본값/off 반환)
+    - archived: 아카이브됨 (소프트 삭제)
+
+    값 유형:
+    - boolean: True/False 토글
+    - string: 문자열 값 (예: 변형 이름)
+    - number: 숫자 값 (int 또는 float)
+    - json: 임의의 JSON 객체
+
+    주요 필드:
+    - flag_id: 고유 식별자 (UUID, DB 자동 생성)
+    - org_id: 소속 조직 ('global'이면 시스템 플래그)
+    - key: 플래그 키 (조직 내 고유)
+    - name: 표시용 이름
+    - value_type: 값 유형
+    - default_value: 기본값 (off일 때)
+    - enabled_value: 활성화 값 (on일 때)
+    - rollout: 점진적 롤아웃 설정 (JSONB)
+    - targeting: 타겟팅 규칙 (JSONB)
+    """
+
+    __tablename__ = "feature_flags"
+
+    flag_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    value_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'boolean'"))
+    default_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, server_default=text("'false'::jsonb"))
+    enabled_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, server_default=text("'true'::jsonb"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_killswitch: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    rollout: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    targeting: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("'{}'::text[]"))
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    created_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "key", name="uq_feature_flag_org_key"),
+        Index("idx_feature_flags_org_id", "org_id"),
+        Index("idx_feature_flags_key", "key"),
+        Index("idx_feature_flags_status", "org_id", "status"),
+        Index("idx_feature_flags_tags", "tags", postgresql_using="gin"),
+        Index(
+            "idx_feature_flags_active",
+            "org_id",
+            "enabled",
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index(
+            "idx_feature_flags_killswitch",
+            "org_id",
+            "is_killswitch",
+            postgresql_where=text("is_killswitch = true"),
+        ),
+    )
+
+
+class FeatureFlagOverride(Base):
+    """Feature Flag Override ORM 모델
+
+    특정 조직 또는 사용자에 대한 플래그 값 오버라이드를 정의합니다.
+    오버라이드는 기본 플래그 값보다 우선합니다.
+
+    오버라이드 범위:
+    - org: 조직 수준 (해당 조직의 모든 사용자)
+    - user: 사용자 수준 (특정 사용자만)
+
+    해결 순서 (첫 번째 일치 적용):
+    1. 사용자별 오버라이드
+    2. 조직별 오버라이드
+    3. 전역 플래그 기본값
+
+    주요 필드:
+    - override_id: 고유 식별자 (UUID, DB 자동 생성)
+    - flag_id: 오버라이드할 플래그 (FK)
+    - org_id: 소속 조직
+    - scope: 오버라이드 범위 (org/user)
+    - target_id: 대상 ID (user scope일 때 user_id)
+    - value: 오버라이드 값 (JSONB)
+    """
+
+    __tablename__ = "feature_flag_overrides"
+
+    override_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    flag_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("feature_flags.flag_id", ondelete="CASCADE"), nullable=False
+    )
+    flag_key: Mapped[str] = mapped_column(Text, nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("organization.org_id", ondelete="CASCADE"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(Text, nullable=False)  # 'org' or 'user'
+    target_id: Mapped[str | None] = mapped_column(Text)  # user_id for USER scope
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    reason: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+    __table_args__ = (
+        # Unique constraint: one override per flag + scope + target combination
+        UniqueConstraint("flag_id", "org_id", "scope", "target_id", name="uq_feature_flag_override"),
+        Index("idx_feature_flag_overrides_flag_id", "flag_id"),
+        Index("idx_feature_flag_overrides_org_id", "org_id"),
+        Index("idx_feature_flag_overrides_scope", "flag_id", "org_id", "scope"),
+        Index("idx_feature_flag_overrides_target", "flag_id", "org_id", "target_id"),
+        Index(
+            "idx_feature_flag_overrides_active",
+            "flag_id",
+            "org_id",
+            "enabled",
+            postgresql_where=text("enabled = true AND (expires_at IS NULL OR expires_at > NOW())"),
+        ),
+    )
+
+
+class FeatureFlagChangeLog(Base):
+    """Feature Flag Change Log ORM 모델
+
+    플래그 변경 이력을 기록합니다.
+    감사 추적 및 변경 복구에 사용됩니다.
+
+    이벤트 유형:
+    - created: 플래그 생성
+    - updated: 플래그 업데이트
+    - enabled: 플래그 활성화
+    - disabled: 플래그 비활성화
+    - archived: 플래그 아카이브
+    - override_added: 오버라이드 추가
+    - override_updated: 오버라이드 업데이트
+    - override_removed: 오버라이드 제거
+
+    주요 필드:
+    - event_id: 이벤트 고유 ID
+    - flag_id: 변경된 플래그
+    - event_type: 이벤트 유형
+    - previous_value: 이전 값 (JSONB)
+    - new_value: 새 값 (JSONB)
+    - changed_by: 변경한 사용자
+    """
+
+    __tablename__ = "feature_flag_change_logs"
+
+    event_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    flag_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("feature_flags.flag_id", ondelete="CASCADE"), nullable=False
+    )
+    flag_key: Mapped[str] = mapped_column(Text, nullable=False)
+    org_id: Mapped[str] = mapped_column(Text, nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(Text)
+    previous_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    new_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metadata_dict: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), name="metadata"
+    )
+    timestamp: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("idx_feature_flag_change_logs_flag_id", "flag_id"),
+        Index("idx_feature_flag_change_logs_org_ts", "org_id", "timestamp"),
+        Index("idx_feature_flag_change_logs_event_type", "flag_id", "event_type"),
+        Index("idx_feature_flag_change_logs_changed_by", "changed_by", "timestamp"),
     )
 
 
@@ -508,16 +922,12 @@ class AuditLogOutbox(Base):
 
     __tablename__ = "audit_logs_outbox"
 
-    id: Mapped[str] = mapped_column(
-        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
-    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True, server_default=text("uuid_generate_v4()::text"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), index=True
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    processed: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), nullable=False
-    )
+    processed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), nullable=False)
 
     __table_args__ = (
         # Partial index for efficiency: only track unprocessed items
@@ -561,9 +971,7 @@ class AuditLog(Base):
 
     # 복합 PK (파티셔닝 요구사항: 파티션 키가 PK에 포함되어야 함)
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), primary_key=True
-    )
+    timestamp: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
 
     # 사용자 정보
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
@@ -594,9 +1002,7 @@ class AuditLog(Base):
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 스트리밍 여부 (Codex 피드백: is_streaming 추가)
-    is_streaming: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), nullable=False
-    )
+    is_streaming: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), nullable=False)
 
     # 추가 메타데이터
     metadata_dict: Mapped[dict[str, Any]] = mapped_column(
@@ -650,6 +1056,49 @@ class RunEvent(Base):
     __table_args__ = (
         Index("idx_run_events_run_id", "run_id"),
         Index("idx_run_events_seq", "run_id", "seq"),
+    )
+
+
+class Cron(Base):
+    """Cron 작업 스케줄링 ORM 모델
+
+    정기적으로 실행되어야 하는 에이전트 작업을 정의합니다.
+
+    주요 필드:
+    - cron_id: 고유 식별자 (UUID, DB 자동 생성)
+    - assistant_id: 실행할 어시스턴트 (FK)
+    - thread_id: 실행할 스레드 (FK, 선택사항)
+    - user_id: 소유자
+    - schedule: Cron 표현식
+    - payload: 실행 시 전달할 입력 데이터 (JSONB)
+    - next_run_date: 다음 실행 예정 시간
+    - end_time: 스케줄 종료 시간
+    """
+
+    __tablename__ = "crons"
+
+    cron_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, server_default=text("uuid_generate_v4()::text")
+    )
+    assistant_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("assistant.assistant_id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("thread.thread_id", ondelete="SET NULL"), nullable=True
+    )
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    schedule: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    next_run_date: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+    __table_args__ = (
+        Index("idx_crons_user_id", "user_id"),
+        Index("idx_crons_assistant_id", "assistant_id"),
+        Index("idx_crons_thread_id", "thread_id"),
+        Index("idx_crons_next_run_date", "next_run_date"),
     )
 
 

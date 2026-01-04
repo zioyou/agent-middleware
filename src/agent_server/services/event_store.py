@@ -169,9 +169,7 @@ class EventStore:
             ).bindparams(bindparam("data", type_=JSONB))
             await conn.execute(stmt, self._build_insert_rows(run_id, events))
 
-    async def stream_events_since(
-        self, run_id: str, last_event_id: str
-    ) -> AsyncIterator[SSEEvent]:
+    async def stream_events_since(self, run_id: str, last_event_id: str) -> AsyncIterator[SSEEvent]:
         """특정 이벤트 이후의 모든 이벤트를 스트리밍 조회"""
         try:
             last_seq = int(str(last_event_id).split("_event_")[-1])
