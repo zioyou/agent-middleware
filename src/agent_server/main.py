@@ -285,12 +285,40 @@ app = FastAPI(
 
 # 1. CORS 미들웨어: 교차 출처 리소스 공유 설정
 # 프론트엔드가 다른 도메인에서 API를 호출할 수 있도록 허용
+# SECURITY: CORS 설정은 환경변수로 제어됨
+# - CORS_ORIGINS: 허용할 도메인 목록 (쉼표 구분, 기본값: 비어있음 = 차단)
+# - CORS_ALLOW_CREDENTIALS: 자격 증명 허용 여부 (기본값: false)
+# - CORS_ALLOW_ALL: "*" 허용 여부 - 개발 전용! (기본값: false)
+_cors_origins_str = os.getenv("CORS_ORIGINS", "")
+_cors_allow_all = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
+_cors_allow_credentials = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
+
+# SECURITY: allow_origins=["*"]와 allow_credentials=True는 함께 사용하면 안됨
+# 브라우저가 이 조합을 거부하고, 보안상 위험함
+if _cors_allow_all:
+    # 개발 환경에서만 사용해야 함
+    _env = os.getenv("ENVIRONMENT", "development").lower()
+    if _env not in ("development", "dev", "test", "testing", "local"):
+        logger.warning(
+            "⚠️  SECURITY WARNING: CORS_ALLOW_ALL=true in non-development environment (%s). "
+            "This allows requests from ANY origin. Set CORS_ORIGINS explicitly for production.",
+            _env,
+        )
+    _cors_origins: list[str] = ["*"]
+    # SECURITY FIX: credentials와 "*"는 함께 사용 불가
+    _cors_allow_credentials = False
+elif _cors_origins_str:
+    _cors_origins = [origin.strip() for origin in _cors_origins_str.split(",") if origin.strip()]
+else:
+    # 기본값: 빈 목록 = CORS 요청 차단 (보안 기본값)
+    _cors_origins = []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 프로덕션에서는 특정 도메인으로 제한 필요
-    allow_credentials=True,  # 쿠키 및 인증 헤더 허용
-    allow_methods=["*"],  # 모든 HTTP 메서드 허용
-    allow_headers=["*"],  # 모든 HTTP 헤더 허용
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # 명시적 메서드
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],  # 명시적 헤더
 )
 
 # 2. DoubleEncodedJSON 미들웨어: 프론트엔드의 이중 인코딩 처리

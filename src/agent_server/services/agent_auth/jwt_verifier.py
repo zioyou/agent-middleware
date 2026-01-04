@@ -58,6 +58,7 @@ class AgentJWTVerifier:
                 issuer=self._issuer,
                 audience=self._audience,
                 leeway=self._leeway,
+                options={"require": ["exp"]},
             )
         except PyJWTError as exc:  # pragma: no cover - library branch
             raise AgentJWTVerificationError(str(exc)) from exc

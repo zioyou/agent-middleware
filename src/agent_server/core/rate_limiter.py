@@ -103,7 +103,9 @@ RATE_LIMIT_DEFAULT_PER_HOUR = int(os.getenv("RATE_LIMIT_DEFAULT_PER_HOUR", "5000
 RATE_LIMIT_ANON_PER_HOUR = int(os.getenv("RATE_LIMIT_ANON_PER_HOUR", "1000"))
 RATE_LIMIT_STREAMING_PER_HOUR = int(os.getenv("RATE_LIMIT_STREAMING_PER_HOUR", "100"))
 RATE_LIMIT_RUNS_PER_HOUR = int(os.getenv("RATE_LIMIT_RUNS_PER_HOUR", "500"))
-RATE_LIMIT_FALLBACK = os.getenv("RATE_LIMIT_FALLBACK", "skip")  # skip or error
+# SECURITY: Default to "error" (fail-closed) for safety.
+# "skip" allows all requests when Redis fails - use only if availability > security.
+RATE_LIMIT_FALLBACK = os.getenv("RATE_LIMIT_FALLBACK", "error")  # error (default) or skip
 
 # Lua script for atomic INCR + EXPIRE
 # This prevents race conditions where TTL could fail to be set
@@ -304,9 +306,7 @@ class RateLimiterManager:
             return
 
         if not SLOWAPI_AVAILABLE:
-            logger.warning(
-                "⚠️  SlowAPI package not installed - run: uv pip install \".[redis]\""
-            )
+            logger.warning('⚠️  SlowAPI package not installed - run: uv pip install ".[redis]"')
             return
 
         # Redis 가용성 확인
@@ -314,15 +314,11 @@ class RateLimiterManager:
 
         if not self._redis_available:
             if RATE_LIMIT_FALLBACK == "skip":
-                logger.warning(
-                    "⚠️  Rate limiting disabled - Redis unavailable (fallback=skip)"
-                )
+                logger.warning("⚠️  Rate limiting disabled - Redis unavailable (fallback=skip)")
                 return
             else:
                 # Initialize in-memory fallback instead of disabling
-                logger.warning(
-                    "⚠️  Redis unavailable - using in-memory rate limiting fallback"
-                )
+                logger.warning("⚠️  Redis unavailable - using in-memory rate limiting fallback")
                 self._fallback_limiter = InMemoryRateLimiter()
                 self._using_fallback = True
                 self._is_available = True  # Enable rate limiting with fallback
@@ -422,8 +418,15 @@ class RateLimiterManager:
             if self._fallback_limiter:
                 logger.warning("Using in-memory fallback due to Redis error")
                 return self._fallback_limiter.check_and_increment(key, limit, window)
-            # 오류 시 요청 허용 (fail-open)
-            return True, limit, int(time.time()) + window
+            # SECURITY FIX: Fail-closed by default - deny requests on Redis errors
+            # Set RATE_LIMIT_FALLBACK=skip to allow requests (fail-open) if needed
+            if RATE_LIMIT_FALLBACK == "skip":
+                logger.warning("Rate limit fallback=skip: allowing request despite Redis error")
+                return True, limit, int(time.time()) + window
+            else:
+                # Default: fail-closed - deny the request
+                logger.warning("Rate limit fallback=error: denying request due to Redis error")
+                return False, 0, int(time.time()) + window
 
     async def _increment_counter(self, key: str, ttl: int) -> int:
         """Redis 카운터 증가 (Lua 스크립트로 원자적 연산)

@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 # Environment variable for HTTPS requirement (configurable)
 FEDERATION_REQUIRE_HTTPS = os.getenv("FEDERATION_REQUIRE_HTTPS", "true").lower() == "true"
+# Skip DNS resolution check (for testing only - NOT for production)
+SSRF_SKIP_DNS_CHECK = os.getenv("SSRF_SKIP_DNS_CHECK", "false").lower() == "true"
 
 # =============================================================================
 # Blocked IP Ranges and Hostnames
@@ -66,20 +68,22 @@ BLOCKED_IP_RANGES: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
 ]
 
 # Blocked hostnames (case-insensitive)
-BLOCKED_HOSTNAMES: frozenset[str] = frozenset({
-    # Localhost variants
-    "localhost",
-    "localhost.localdomain",
-    "local",
-    # Cloud metadata endpoints
-    "metadata.google.internal",  # GCP
-    "169.254.169.254",           # AWS/GCP/Azure metadata IP
-    "metadata",                   # Short form
-    # Kubernetes internal
-    "kubernetes.default.svc",
-    "kubernetes.default",
-    "kubernetes",
-})
+BLOCKED_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        # Localhost variants
+        "localhost",
+        "localhost.localdomain",
+        "local",
+        # Cloud metadata endpoints
+        "metadata.google.internal",  # GCP
+        "169.254.169.254",  # AWS/GCP/Azure metadata IP
+        "metadata",  # Short form
+        # Kubernetes internal
+        "kubernetes.default.svc",
+        "kubernetes.default",
+        "kubernetes",
+    }
+)
 
 # Allowed schemes
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
@@ -222,6 +226,28 @@ def validate_url_for_ssrf(
                 reason="internal_hostname",
             )
 
+        if not SSRF_SKIP_DNS_CHECK:
+            resolved_ips = _resolve_hostname_sync(hostname)
+            if resolved_ips is None:
+                raise SSRFValidationError(
+                    f"DNS resolution failed for hostname: {hostname}",
+                    url=url,
+                    reason="dns_resolution_failed",
+                )
+
+            for resolved_ip in resolved_ips:
+                try:
+                    ip_obj = ipaddress.ip_address(resolved_ip)
+                    for blocked_range in BLOCKED_IP_RANGES:
+                        if ip_obj in blocked_range:
+                            raise SSRFValidationError(
+                                f"Hostname {hostname} resolves to blocked IP {resolved_ip} ({blocked_range})",
+                                url=url,
+                                reason="resolved_ip_blocked",
+                            )
+                except ValueError:
+                    continue
+
     # Port validation (optional)
     if not allow_any_port and parsed.port:
         if parsed.port not in COMMON_PORTS:
@@ -239,6 +265,54 @@ def validate_url_for_ssrf(
             # )
 
     return url
+
+
+def _resolve_hostname_sync(hostname: str) -> list[str] | None:
+    """Resolve hostname to IP addresses synchronously.
+
+    SECURITY: This function is used for DNS rebinding protection.
+    It resolves the hostname BEFORE making the request to ensure
+    the resolved IPs are not in blocked ranges.
+
+    Args:
+        hostname: Hostname to resolve
+
+    Returns:
+        List of resolved IP addresses, or None if resolution failed
+    """
+    import socket
+
+    try:
+        # Get all address info (IPv4 and IPv6)
+        results = socket.getaddrinfo(
+            hostname,
+            None,
+            socket.AF_UNSPEC,  # Both IPv4 and IPv6
+            socket.SOCK_STREAM,
+            0,
+            socket.AI_ADDRCONFIG,
+        )
+
+        # Extract unique IP addresses
+        ips: set[str] = set()
+        for result in results:
+            family, _, _, _, sockaddr = result
+            # sockaddr is (ip, port) for IPv4, (ip, port, flow, scope) for IPv6
+            ip = sockaddr[0]
+            ips.add(ip)
+
+        if not ips:
+            logger.warning("DNS resolution returned no IPs for %s", hostname)
+            return None
+
+        return list(ips)
+
+    except socket.gaierror as e:
+        logger.warning("DNS resolution failed for %s: %s", hostname, e)
+        return None
+    except Exception as e:
+        logger.warning("Unexpected error resolving %s: %s", hostname, e)
+        return None
 
 
 def _looks_like_internal_hostname(hostname: str) -> bool:

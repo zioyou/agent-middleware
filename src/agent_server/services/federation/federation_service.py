@@ -21,6 +21,9 @@ from ..langgraph_service import get_langgraph_service
 from .config import FederationConfig, PeerConfig, parse_federation_config
 from .remote_agent_card_service import RemoteAgentCardResolver
 
+MAX_FEDERATION_TIMEOUT_MS = 300000
+DEFAULT_FEDERATION_TIMEOUT_MS = 30000
+
 logger = logging.getLogger(__name__)
 
 
@@ -262,11 +265,22 @@ class FederationService:
         return client
 
     @staticmethod
-    def _timeout_seconds(peer: PeerConfig, override_ms: int | None) -> float | None:
+    def _timeout_seconds(peer: PeerConfig, override_ms: int | None) -> float:
+        """Calculate timeout in seconds, clamped to MAX_FEDERATION_TIMEOUT_MS."""
         timeout_ms = override_ms if override_ms is not None else peer.timeout_ms
         if timeout_ms is None:
-            return None
-        return max(0.0, timeout_ms / 1000.0)
+            timeout_ms = DEFAULT_FEDERATION_TIMEOUT_MS
+
+        clamped_ms = max(0, min(timeout_ms, MAX_FEDERATION_TIMEOUT_MS))
+        if timeout_ms > MAX_FEDERATION_TIMEOUT_MS:
+            logger.debug(
+                "Timeout clamped from %d to %d ms for peer %s",
+                timeout_ms,
+                MAX_FEDERATION_TIMEOUT_MS,
+                peer.id,
+            )
+
+        return clamped_ms / 1000.0
 
     @staticmethod
     def _build_headers(peer: PeerConfig) -> dict[str, str]:

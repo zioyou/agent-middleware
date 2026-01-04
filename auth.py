@@ -23,16 +23,33 @@ auth = Auth()
 AUTH_TYPE = os.getenv("AUTH_TYPE", "noop").lower()
 
 if AUTH_TYPE == "noop":
+    # SECURITY WARNING: noop mode should only be used in development.
+    # In production, always use AUTH_TYPE=custom with proper authentication.
+    import os as _os
+
+    _env = _os.getenv("ENVIRONMENT", "development").lower()
+    if _env not in ("development", "dev", "test", "testing", "local"):
+        logger.warning(
+            "⚠️  SECURITY WARNING: AUTH_TYPE=noop in non-development environment (%s). "
+            "All requests will be treated as UNAUTHENTICATED. "
+            "Set AUTH_TYPE=custom for production.",
+            _env,
+        )
     logger.info("Using noop authentication (no auth required)")
 
     @auth.authenticate
     async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
-        """No-op authentication that allows all requests."""
+        """No-op authentication - requests are allowed but marked as unauthenticated.
+
+        SECURITY: Returns is_authenticated=False to ensure authorization checks
+        properly handle anonymous access. Resources requiring authentication
+        will correctly deny access.
+        """
         _ = headers  # Suppress unused warning
         return {
             "identity": "anonymous",
             "display_name": "Anonymous User",
-            "is_authenticated": True,
+            "is_authenticated": False,  # SECURITY FIX: Mark as unauthenticated
         }
 
     @auth.on

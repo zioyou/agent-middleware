@@ -21,6 +21,16 @@ from .config import PeerConfig
 from .remote_agent_card_service import RemoteAgentCardResolver
 
 _CARD_SUFFIX = "/.well-known/agent-card.json"
+_CRLF_CHARS = frozenset("\r\n")
+
+
+def _sanitize_header_value(value: str) -> str:
+    """Remove CR/LF characters to prevent HTTP header injection attacks."""
+    if not value:
+        return value
+    if any(c in value for c in _CRLF_CHARS):
+        return value.replace("\r", "").replace("\n", "")
+    return value
 
 
 class RemoteA2AClient:
@@ -41,9 +51,7 @@ class RemoteA2AClient:
         self._http_client = http_client or httpx.AsyncClient(
             timeout=timeout_seconds, headers=self._headers or None
         )
-        self._card_resolver = card_resolver or RemoteAgentCardResolver(
-            http_client=self._http_client
-        )
+        self._card_resolver = card_resolver or RemoteAgentCardResolver(http_client=self._http_client)
         self._retry_policy = retry_policy or RetryPolicy()
         self._breaker = circuit_breaker or CircuitBreaker()
         self._factory = ClientFactory(ClientConfig(httpx_client=self._http_client))
@@ -118,6 +126,9 @@ class RemoteA2AClient:
         if headers:
             merged_headers.update(headers)
 
+        if merged_headers:
+            merged_headers = {k: _sanitize_header_value(v) for k, v in merged_headers.items()}
+
         http_kwargs: dict[str, Any] = {}
         if merged_headers:
             http_kwargs["headers"] = merged_headers
@@ -140,7 +151,7 @@ class RemoteA2AClient:
         if not peer.auth_type:
             return {}
         if peer.auth_type.lower() == "bearer" and peer.auth_token:
-            return {"Authorization": f"Bearer {peer.auth_token}"}
+            return {"Authorization": f"Bearer {_sanitize_header_value(peer.auth_token)}"}
         return {}
 
     @staticmethod
