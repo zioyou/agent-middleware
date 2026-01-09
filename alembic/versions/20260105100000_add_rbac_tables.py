@@ -129,7 +129,9 @@ def upgrade() -> None:
         "idx_user_custom_perms_active",
         "user_custom_permissions",
         ["user_id", "org_id"],
-        postgresql_where=sa.text("expires_at IS NULL OR expires_at > NOW()"),
+        # Note: Changed from 'expires_at IS NULL OR expires_at > NOW()' to just 'expires_at IS NULL'
+        # because NOW() is not IMMUTABLE. Application code should filter expired records.
+        postgresql_where=sa.text("expires_at IS NULL")
     )
 
 

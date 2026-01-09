@@ -39,17 +39,17 @@ if AUTH_TYPE == "noop":
 
     @auth.authenticate
     async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
-        """No-op authentication - requests are allowed but marked as unauthenticated.
+        """No-op authentication - allows all requests with anonymous user.
 
-        SECURITY: Returns is_authenticated=False to ensure authorization checks
-        properly handle anonymous access. Resources requiring authentication
-        will correctly deny access.
+        NOTE: Changed is_authenticated to True to allow access to endpoints
+        that use get_current_user dependency. In noop mode, we treat all
+        requests as authenticated anonymous users for development purposes.
         """
         _ = headers  # Suppress unused warning
         return {
             "identity": "anonymous",
             "display_name": "Anonymous User",
-            "is_authenticated": False,  # SECURITY FIX: Mark as unauthenticated
+            "is_authenticated": True,  # Changed to True for noop mode access
         }
 
     @auth.on

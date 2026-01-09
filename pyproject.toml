@@ -30,6 +30,7 @@ dependencies = [
     "fastapi>=0.116.1",
     "greenlet>=3.2.3",
     "langchain-openai>=0.3.28",
+    "langchain-google-genai>=2.0.0",
     "langgraph>=1.0.0",
     "langchain>=1.0.0",
     "langgraph-checkpoint-postgres>=2.0.23",
@@ -42,6 +43,8 @@ dependencies = [
     "langfuse>=3.3.4",
     "a2a-sdk[http-server]>=0.3.22",
     "croniter>=6.0.0",
+    "tavily-python>=0.5.0",
+    "duckduckgo-search>=8.1.0",
 ]
 
 [dependency-groups]

@@ -1,64 +1,50 @@
-"""Human-in-the-Loop ReAct 에이전트용 예제 도구 모듈
+"""Human-in-the-Loop ReAct 에이전트용 도구 모듈
 
-이 모듈은 웹 검색 기능을 제공하는 기본 도구를 포함합니다.
-Tavily 검색 엔진을 사용하는 간단한 예제로 구성되어 있습니다.
+이 모듈은 react_agent_hitl이 사용할 도구들을 정의합니다.
+공통 도구를 import하여 재사용합니다.
 
-주요 구성 요소:
-• search - 웹 검색 도구 (Tavily 기반)
-• TOOLS - 에이전트가 사용할 도구 목록
-
-사용 예:
-    from react_agent_hitl.tools import TOOLS
-
-    # 그래프에 도구 바인딩
-    model_with_tools = model.bind_tools(TOOLS)
+주요 도구:
+• search - Tavily 웹 검색 (공통)
+• calculator - 수학 계산 (공통)
 
 참고:
-    이 도구들은 시작을 위한 무료 예제입니다.
-    프로덕션 환경에서는 더 강력하고 특화된 도구를 구현하는 것을 권장합니다.
+    공통 도구는 graphs/common/tools.py에 정의되어 있습니다.
+    HITL 패턴에서는 도구 실행 전 사용자의 승인을 받습니다.
 """
 
 from collections.abc import Callable
 from typing import Any
 
 from langgraph.runtime import get_runtime
-
 from react_agent_hitl.context import Context
 
-
-async def search(query: str) -> dict[str, Any] | None:
-    """일반 웹 검색을 수행하는 도구 함수
-
-    이 함수는 Tavily 검색 엔진을 사용하여 웹 검색을 수행합니다.
-    Tavily는 포괄적이고 정확하며 신뢰할 수 있는 검색 결과를 제공하도록 설계되었으며,
-    특히 최신 이벤트나 현재 사건에 대한 질문에 유용합니다.
-
-    동작 흐름:
-    1. Runtime 컨텍스트에서 검색 설정 가져오기
-    2. 최대 검색 결과 개수 확인
-    3. 시뮬레이션된 검색 결과 반환 (예제)
-
-    Args:
-        query (str): 검색할 쿼리 문자열
-
-    Returns:
-        dict[str, Any] | None: 검색 결과 딕셔너리
-            - query: 원본 검색 쿼리
-            - max_search_results: 최대 검색 결과 개수
-            - results: 검색 결과 (현재는 시뮬레이션)
-
-    참고:
-        - 실제 프로덕션 환경에서는 Tavily API를 호출하도록 구현해야 합니다
-        - Runtime[Context]를 통해 사용자별 검색 설정에 접근합니다
-    """
-    runtime = get_runtime(Context)
-    return {
-        "query": query,
-        "max_search_results": runtime.context.max_search_results,
-        "results": f"Simulated search results for '{query}'",
-    }
+# 공통 도구 import
+from common.tools import (
+    search,
+    calculator,
+    COMMON_TOOLS
+)
 
 
-# 에이전트가 사용할 도구 목록
-# LangGraph 그래프에서 model.bind_tools(TOOLS)로 바인딩하여 사용
-TOOLS: list[Callable[..., Any]] = [search]
+# ============================================================================
+# react_agent_hitl 전용 도구 (필요시 여기에 추가)
+# ============================================================================
+
+# 예시: HITL 전용 커스텀 도구
+# async def hitl_custom_tool(param: str) -> dict[str, Any]:
+#     """react_agent_hitl 전용 도구"""
+#     ...
+
+
+# ---------------------------------------------------------------------------
+# 도구 목록 (LangGraph 도구 바인딩용)
+# ---------------------------------------------------------------------------
+
+# 옵션 1: 모든 공통 도구 사용 (권장 - 테스트 용이)
+TOOLS: list[Callable[..., Any]] = [search, calculator]
+
+# 옵션 2: HITL에서 특정 도구만 사용
+# TOOLS: list[Callable[..., Any]] = [calculator]  # search 제외
+
+# 참고: call_research_agent도 사용 가능하지만 HITL 테스트를 위해서는
+# 단순한 도구(calculator, search)가 더 적합합니다.

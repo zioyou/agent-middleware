@@ -209,7 +209,9 @@ def upgrade() -> None:
         "idx_feature_flag_overrides_active",
         "feature_flag_overrides",
         ["flag_id", "org_id", "enabled"],
-        postgresql_where=sa.text("enabled = true AND (expires_at IS NULL OR expires_at > NOW())"),
+        # Note: Changed to filter by enabled=true and non-expiring records only
+        # Original included 'expires_at > NOW()' but NOW() is not IMMUTABLE
+        postgresql_where=sa.text("enabled = true AND expires_at IS NULL"),
     )
 
     op.create_table(

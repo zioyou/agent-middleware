@@ -27,7 +27,7 @@ COPY src/ ./src/
 
 # Install project (builds wheel and installs dependencies specified in pyproject)
 RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir .[redis]
 
 # -----------------------------
 # Final, minimal runtime image
@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages and console scripts from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/lib/python3.13/site-packages/ /usr/local/lib/python3.13/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Copy runtime assets required by the app and alembic

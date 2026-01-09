@@ -208,11 +208,9 @@ async def human_approval(state: State) -> Command:
     4. 사용자가 POST /threads/{thread_id}/runs/{run_id} 엔드포인트로 응답 전송
     5. 사용자 응답과 함께 이 함수가 재개되어 다음 노드로 라우팅
 
-    사용자 응답 타입:
-    - accept: 도구를 원래 인자 그대로 실행
+    사용자 응답 타입 (agent-chat 클라이언트):    - approve: 도구를 원래 인자 그대로 실행
     - edit: 도구 인자를 수정한 후 실행
-    - response: 도구 실행을 취소하고 사용자의 텍스트 응답 제공
-    - ignore: 도구 실행을 취소하고 대화 종료
+    - reject: 도구 실행을 취소
 
     Args:
         state (State): 현재 대화 상태 (도구 호출이 포함된 메시지 포함)
@@ -229,87 +227,134 @@ async def human_approval(state: State) -> Command:
           Body: [{"type": "accept"}] 또는 다른 응답 타입
         - LangGraph는 자동으로 체크포인트를 관리하므로 명시적 저장 불필요
     """
-    # TODO: Mark as Resolved 기능 수정 필요
-    # 이슈: Command(goto=END)가 LangGraph 버그로 무한 루프 생성
+    # TODO: LangGraph 버그 해결됨 - goto=END 제거
     # GitHub 이슈: https://github.com/langchain-ai/langgraph/issues/5572
-    # goto=END 명령이 무시되고 "branch:to:__end__" 채널 에러 발생
-
+    
+    import logging
+    logger = logging.getLogger(__name__)
     # 도구 호출이 포함된 가장 최근 AI 메시지 찾기
+    logger.info(f"[human_approval] ENTERED - Starting human approval flow")
     tool_message = _find_tool_message(state.messages)
     if not tool_message:
-        # 도구 호출이 없으면 종료
-        return Command(goto=END)
+        logger.info("[human_approval] No tool calls found, returning empty Command")
+        # 도구 호출이 없으면 빈 Command 반환 (자동 종료)
+        return Command(update={})
 
     # 인터럽트 호출: 실행을 일시 중단하고 사용자 승인 요청
-    # 이 함수는 사용자가 응답할 때까지 여기서 멈춥니다
+    # 웹 UI가 기대하는 스키마 형식으로 전송
+    # action_requests: 각 도구 호출에 대한 요청
+    # review_configs: 각 도구에 허용된 액션 (approve, edit, reject)
     human_response = interrupt(
         {
-            "action_request": {
-                "action": "tool_execution",
-                "args": {
-                    tc["name"]: tc.get("args", {}) for tc in tool_message.tool_calls
-                },
-            },
-            "config": {
-                "allow_respond": True,  # 사용자가 직접 응답 가능
-                "allow_accept": True,  # 도구 승인 가능
-                "allow_edit": True,  # 도구 인자 수정 가능
-                "allow_ignore": True,  # 도구 실행 거부 가능
-            },
+            "action_requests": [
+                {
+                    "name": tc["name"],
+                    "args": tc.get("args", {}),
+                    "description": f"{tc['name']} 를 실행합니다."
+                }
+                for tc in tool_message.tool_calls
+            ],
+            "review_configs": [
+                {
+                    "action_name": tc["name"],
+                    "allowed_decisions": ["approve", "edit", "reject"]
+                }
+                for tc in tool_message.tool_calls
+            ],
         }
     )
 
-    # 사용자 응답이 없거나 형식이 잘못된 경우 종료
-    if not human_response or not isinstance(human_response, list):
-        return Command(goto=END)
+    # LangGraph interrupt() 동작:
+    # 1. 첫 실행 시: interrupt()가 None을 반환하고 그래프를 일시 중단
+    # 2. 재개 시: 노드가 처음부터 다시 실행되고, interrupt()가 resume 값을 반환
+    #
+    # 현재 human_response가 None이면 첫 실행이므로 빈 Command로 중단
+    if human_response is None:
+        logger.info("[human_approval] First execution (human_response is None) - pausing graph")
+        return Command(update={})
 
-    # 첫 번째 응답 추출 및 타입 확인
-    response = human_response[0]
-    response_type = response.get("type", "")
-    response_args = response.get("args")
+    logger.info(f"[human_approval] Resume execution - processing user response")
 
+    # 재개 시: human_response에 사용자 응답이 포함됨
+    # agent-chat 클라이언트는 {"decisions": [{"type": "approve/reject/edit", ...}]} 형식으로 전송
+    # interrupt()는 command의 resume 값을 그대로 반환함
+    
+    # human_response는 {"decisions": [...]} 객체
+    if not isinstance(human_response, dict):
+        # 응답이 형식이 잘못된 경우
+        tool_responses = _create_tool_cancellations(
+            tool_message.tool_calls, "invalid response format - expected dict"
+        )
+        return Command(goto="call_model", update={"messages": tool_responses})
+    
+    # decisions 배열 추출
+    decisions = human_response.get("decisions", [])
+    if not isinstance(decisions, list) or len(decisions) == 0:
+        # decisions가 없거나 잘못된 형식
+        tool_responses = _create_tool_cancellations(
+            tool_message.tool_calls, "invalid response format"
+        )
+        return Command(goto="call_model", update={"messages": tool_responses})
+
+    # 첫 번째 decision 추출 및 타입 확인
+    decision = decisions[0]
+    response_type = decision.get("type", "")
+    
     # 사용자 응답 타입에 따라 분기 처리
+    # agent-chat 형식: approve/edit/reject
 
-    if response_type == "accept":
+    if response_type == "approve":
         # 승인: 도구를 원래 인자 그대로 실행
         return Command(goto="tools")
 
-    elif response_type == "response":
-        # 응답: 도구 실행을 취소하고 사용자 메시지를 모델에 전달
-        # 도구 호출들을 취소 메시지로 변환
-        tool_responses = _create_tool_cancellations(
-            tool_message.tool_calls, "was interrupted for human input"
-        )
-        # 사용자의 텍스트 응답을 HumanMessage로 생성
-        human_message = HumanMessage(content=str(response_args))
-        # 취소 메시지와 사용자 메시지를 상태에 추가하고 모델 재호출
-        return Command(
-            goto="call_model", update={"messages": tool_responses + [human_message]}
-        )
-
-    elif (
-        response_type == "edit"
-        and isinstance(response_args, dict)
-        and "args" in response_args
-    ):
+    elif response_type == "edit":
         # 수정: 도구 인자를 사용자가 제공한 값으로 업데이트 후 실행
-        updated_calls = _update_tool_calls(tool_message.tool_calls, response_args)
-        # 수정된 도구 호출로 새 AIMessage 생성
-        updated_message = AIMessage(
-            content=tool_message.content, tool_calls=updated_calls, id=tool_message.id
-        )
-        # 업데이트된 메시지로 도구 실행
-        return Command(goto="tools", update={"messages": [updated_message]})
+        # agent-chat 형식: {"type": "edit", "edited_action": {"name": "...", "args": {...}}}
+        edited_action = decision.get("edited_action", {})
+        if edited_action and "name" in edited_action and "args" in edited_action:
+            # 수정된 도구 호출로 tool_calls 업데이트
+            updated_calls = []
+            for tc in tool_message.tool_calls:
+                if tc["name"] == edited_action["name"]:
+                    # 이 도구의 인자를 사용자가 수정한 값으로 교체
+                    updated_call = tc.copy()
+                    updated_call["args"] = edited_action["args"]
+                    updated_calls.append(updated_call)
+                else:
+                    updated_calls.append(tc)
+            
+            # 수정된 도구 호출로 새 AIMessage 생성
+            updated_message = AIMessage(
+                content=tool_message.content, tool_calls=updated_calls, id=tool_message.id
+            )
+            return Command(goto="tools", update={"messages": [updated_message]})
+        else:
+            # edited_action 형식이 잘못된 경우 취소 후 모델 재호출
+            tool_responses = _create_tool_cancellations(
+                tool_message.tool_calls, "invalid edit format"
+            )
+            return Command(goto="call_model", update={"messages": tool_responses})
 
-    else:  # ignore 또는 잘못된 형식
+    elif response_type == "reject":
         # 거부: 도구 실행을 취소하고 종료
-        reason = (
-            "cancelled by human operator"
-            if response_type == "ignore"
-            else "invalid format"
+        # 거부 메시지가 있으면 HumanMessage로 추가
+        tool_responses = _create_tool_cancellations(
+            tool_message.tool_calls, "rejected by human operator"
         )
-        tool_responses = _create_tool_cancellations(tool_message.tool_calls, reason)
-        return Command(goto=END, update={"messages": tool_responses})
+        reject_message = decision.get("message")
+        if reject_message:
+            human_msg = HumanMessage(content=str(reject_message))
+            return Command(goto="call_model", update={"messages": tool_responses + [human_msg]})
+        else:
+            # 거부만 하고 메시지 없으면 모델 재호출 (자동 종료)
+            return Command(goto="call_model", update={"messages": tool_responses})
+
+    else:  # 잘못된 형식
+        # 알 수 없는 응답 타입 - 모델 재호출로 종료
+        tool_responses = _create_tool_cancellations(
+            tool_message.tool_calls, f"unknown response type: {response_type}"
+        )
+        return Command(goto="call_model", update={"messages": tool_responses})
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +413,16 @@ builder.add_conditional_edges(
     "call_model", route_model_output, path_map=["human_approval", END]
 )
 
+# human_approval 노드는 Command를 반환하므로 동적 라우팅이 자동으로 처리됨
+# Command(goto="tools"), Command(goto="call_model"), 또는 빈 Command를 반환
+# LangGraph는 Command의 goto 파라미터를 기반으로 자동으로 다음 노드로 이동함
+# 따라서 human_approval에서 별도의 엣지를 정의할 필요가 없음
+# 
+# 사용자 응답에 따른 라우팅:
+#   - approve: Command(goto="tools") → 도구 실행
+#   - edit: Command(goto="tools", update=...) → 수정된 인자로 도구 실행
+#   - reject: Command(goto="call_model", update=...) → 취소 메시지와 함께 모델 재호출
+#   - invalid: Command(goto="call_model", update=...) → 에러 처리 후 모델 재호출
 
 # tools 노드에서 call_model로의 일반 엣지 추가
 # 이렇게 하면 사이클이 생성됩니다: 도구 사용 후 항상 모델로 돌아갑니다
@@ -377,3 +432,4 @@ builder.add_edge("tools", "call_model")
 # 빌더를 실행 가능한 그래프로 컴파일
 # Human-in-the-Loop 기능을 갖춘 ReAct 에이전트 완성
 graph = builder.compile(name="ReAct Agent")
+
