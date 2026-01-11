@@ -79,6 +79,13 @@ class AgentCardGenerator:
 
         skills = self._build_skills(skills_data)
 
+        # Build capabilities
+        caps_data = (
+            decorator_meta.get("capabilities")
+            or docstring_meta.get("capabilities")
+            or {}
+        )
+
         return AgentCard(
             name=name,
             description=description,
@@ -86,9 +93,10 @@ class AgentCardGenerator:
             version=self._generate_version(graph, graph_id),
             protocol_version="0.3.0",
             capabilities=AgentCapabilities(
-                streaming=True,
-                push_notifications=False,
-                state_transition_history=True,
+                streaming=caps_data.get("streaming", True),
+                push_notifications=caps_data.get("push_notifications", False),
+                state_transition_history=caps_data.get("state_transition_history", True),
+                **{k: v for k, v in caps_data.items() if k not in ["streaming", "push_notifications", "state_transition_history"]}
             ),
             skills=skills,
             default_input_modes=["text"],

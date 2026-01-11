@@ -60,21 +60,40 @@ router = APIRouter(prefix="/agents", tags=["Agents"])
 
 
 def _assistant_to_agent(assistant: Any) -> Agent:
-    """Assistant 모델을 Agent 모델로 변환
+    """Assistant 모델을 Agent 모델로 변환 (Agent Protocol v0.1.6 준수)
 
-    기존 Assistant 응답에 capabilities 필드를 추가하여
-    Agent Protocol v0.2.0 호환 Agent 모델로 변환합니다.
+    기존 Assistant 응답에 ap.io.* 표준 capabilities를 추가하고,
+    assistant_id를 agent_id로 맵핑하여 반환합니다.
 
     Args:
         assistant: Assistant 모델 인스턴스
 
     Returns:
-        Agent: capabilities가 추가된 Agent 모델
+        Agent: Agent Protocol 표준을 준수하는 Agent 모델
     """
-    return Agent(
-        **assistant.model_dump(),
-        capabilities=AgentCapabilities(),
+    # DB에 저장된 capabilities 추출 (있다면 사용, 없으면 기본값)
+    saved_caps = (assistant.metadata or {}).get("_capabilities", {})
+    
+    capabilities = AgentCapabilities(
+        ap_io_messages=saved_caps.get("ap.io.messages", True),
+        ap_io_streaming=saved_caps.get("ap.io.streaming", True),
+        streaming=saved_caps.get("streaming", True),
+        checkpoints=saved_caps.get("checkpoints", True),
+        store=saved_caps.get("store", True),
+        human_in_the_loop=saved_caps.get("human_in_the_loop", False),
+        subgraphs=saved_caps.get("subgraphs", False),
     )
+
+    # Agent 모델 생성
+    agent = Agent.model_validate(assistant)
+    
+    # 순수 메타데이터만 남기고 _capabilities 제거
+    if "_capabilities" in agent.metadata:
+        new_meta = dict(agent.metadata)
+        del new_meta["_capabilities"]
+        agent.metadata = new_meta
+    
+    return agent.model_copy(update={"capabilities": capabilities})
 
 
 @router.post("", response_model=Agent)

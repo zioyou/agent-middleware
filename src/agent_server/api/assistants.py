@@ -37,7 +37,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Response
 
 from ..core.auth_deps import get_current_user
 from ..models import (
@@ -397,6 +397,29 @@ async def get_assistant_graph(
     # xray가 None이면 기본값 False로 설정 (최상위 그래프만 반환)
     xray_value = xray if xray is not None else False
     return await service.get_assistant_graph(assistant_id, xray_value, user.identity, user.org_id)
+
+
+@router.get("/assistants/{assistant_id}/graph/image")
+async def get_assistant_graph_image(
+    assistant_id: str,
+    user: User = Depends(get_current_user),
+    service: AssistantService = Depends(get_assistant_service),
+) -> Response:
+    """그래프 시각화 이미지 조회 (PNG)
+
+    어시스턴트의 LangGraph 워크플로우를 PNG 이미지 형식으로 반환합니다.
+    웹 UI에서 에이전트의 구조를 시각적으로 확인하는 데 사용됩니다.
+
+    Args:
+        assistant_id (str): 어시스턴트 고유 식별자
+        user (User): 인증된 사용자 (의존성 주입)
+        service (AssistantService): 어시스턴트 서비스 (의존성 주입)
+
+    Returns:
+        Response: image/png 타입의 이미지 바이너리 데이터
+    """
+    image_data = await service.get_assistant_graph_image(assistant_id, user.identity, user.org_id)
+    return Response(content=image_data, media_type="image/png")
 
 
 @router.get("/assistants/{assistant_id}/subgraphs")

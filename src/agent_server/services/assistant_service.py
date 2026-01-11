@@ -421,8 +421,10 @@ class AssistantService(TracedService):
         Returns:
             list[Assistant]: 사용자의 어시스턴트 목록 (조직 공유 포함)
         """
-        # 사용자 소유 또는 조직 공유 어시스턴트 필터링
-        stmt = select(AssistantORM).where(_build_access_filter(user_identity, org_id))
+        # 사용자 소유 또는 조직 공유 어시스턴트 필터링 (시스템 리소스 포함)
+        stmt = select(AssistantORM).where(
+            _build_access_filter(user_identity, org_id, include_system=True)
+        )
         result = await self.session.scalars(stmt)
         user_assistants = [to_pydantic(a) for a in result.all()]
         return user_assistants
@@ -452,8 +454,10 @@ class AssistantService(TracedService):
         Returns:
             list[Assistant]: 필터링 및 페이지네이션된 어시스턴트 목록
         """
-        # 사용자 소유 또는 조직 공유 어시스턴트를 기반으로 시작
-        stmt = select(AssistantORM).where(_build_access_filter(user_identity, org_id))
+        # 사용자 소유 또는 조직 공유 어시스턴트 필터링 (시스템 리소스 포함)
+        stmt = select(AssistantORM).where(
+            _build_access_filter(user_identity, org_id, include_system=True)
+        )
 
         # 필터 적용
         if request.name:
@@ -551,7 +555,10 @@ class AssistantService(TracedService):
             HTTPException(404): 어시스턴트를 찾을 수 없음
         """
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
@@ -617,7 +624,10 @@ class AssistantService(TracedService):
             config["configurable"] = context_dict
 
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             AssistantORM.user_id == user_identity,
         )
         assistant = await self.session.scalar(stmt)
@@ -654,7 +664,10 @@ class AssistantService(TracedService):
         assistant_update = (
             update(AssistantORM)
             .where(
+                or_(
                 AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
                 AssistantORM.user_id == user_identity,
             )
             .values(
@@ -706,7 +719,10 @@ class AssistantService(TracedService):
         """
         # 삭제는 소유자만 가능 (조직 공유 어시스턴트 제외)
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             AssistantORM.user_id == user_identity,
         )
         assistant = await self.session.scalar(stmt)
@@ -757,7 +773,10 @@ class AssistantService(TracedService):
         """
         # 롤백은 소유자만 가능
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             AssistantORM.user_id == user_identity,
         )
         assistant = await self.session.scalar(stmt)
@@ -777,7 +796,10 @@ class AssistantService(TracedService):
         assistant_update = (
             update(AssistantORM)
             .where(
+                or_(
                 AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
                 AssistantORM.user_id == user_identity,
             )
             .values(
@@ -823,7 +845,10 @@ class AssistantService(TracedService):
             HTTPException(404): 어시스턴트 또는 버전이 없음
         """
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             _build_access_filter(user_identity, org_id),
         )
         assistant = await self.session.scalar(stmt)
@@ -894,7 +919,10 @@ class AssistantService(TracedService):
             HTTPException(400): 스키마 추출 실패
         """
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
@@ -947,7 +975,10 @@ class AssistantService(TracedService):
             HTTPException(400): 그래프 조회 실패
         """
         stmt = select(AssistantORM).where(
-            AssistantORM.assistant_id == assistant_id,
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
             _build_access_filter(user_identity, org_id, include_system=True),
         )
         assistant = await self.session.scalar(stmt)
@@ -967,12 +998,82 @@ class AssistantService(TracedService):
                 drawable_graph = await graph.aget_graph(xray=xray)
                 json_graph = drawable_graph.to_json()
 
-                # 노드 데이터에서 불필요한 id 필드 제거
-                for node in json_graph.get("nodes", []):
-                    if (data := node.get("data")) and isinstance(data, dict):
-                        data.pop("id", None)
+                # 노드 성격별 메타데이터 맵 초기화
+                tools_map = {}
+                functions_map = {}
+                subagents_map = {}
 
-                return json_graph
+                for node_id, node_obj in graph.nodes.items():
+                    if node_id in ["__start__", "__end__"]:
+                        continue
+
+                    kind = self._get_node_kind(node_id, node_obj)
+                    
+                    # 1. 도구 정보 추출 로직 (기존 유지 및 통합)
+                    objs_to_check = [node_obj]
+                    for attr in ["bound", "runnable", "node"]:
+                        if hasattr(node_obj, attr):
+                            objs_to_check.append(getattr(node_obj, attr))
+                    
+                    found_any_tool = False
+                    for obj in objs_to_check:
+                        found_tools = []
+                        if hasattr(obj, "tools") and obj.tools:
+                            found_tools = obj.tools
+                        elif hasattr(obj, "tools_by_name") and obj.tools_by_name:
+                            found_tools = list(obj.tools_by_name.values())
+                        
+                        if not found_tools and hasattr(obj, "steps"):
+                            for step in obj.steps:
+                                if hasattr(step, "tools"):
+                                    found_tools.extend(step.tools)
+                                elif hasattr(step, "tools_by_name"):
+                                    found_tools.extend(list(step.tools_by_name.values()))
+
+                        if found_tools:
+                            found_any_tool = True
+                            for tool in found_tools:
+                                name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+                                if name and name not in tools_map:
+                                    description = getattr(tool, "description", None) or (tool.__doc__ if hasattr(tool, "__doc__") and tool.__doc__ else "")
+                                    tools_map[name] = {
+                                        "name": name,
+                                        "description": description.strip() if description else ""
+                                    }
+                    
+                    # 2. 도구가 아닌 경우 함수 또는 서브에이전트 정보 추출
+                    if not found_any_tool:
+                        description = self._get_node_description(node_id, node_obj)
+                        metadata = {"name": node_id, "description": description}
+                        
+                        if kind == "subagent":
+                            subagents_map[node_id] = metadata
+                        elif kind == "function":
+                            functions_map[node_id] = metadata
+                
+                # 리스트 정렬
+                tools_metadata = sorted(list(tools_map.values()), key=lambda x: x["name"])
+                functions_metadata = sorted(list(functions_map.values()), key=lambda x: x["name"])
+                subagents_metadata = sorted(list(subagents_map.values()), key=lambda x: x["name"])
+
+                # 노드 데이터 보강 (종류 분류 및 ID 제거)
+                for node in json_graph.get("nodes", []):
+                    node_id = node.get("id")
+                    if "data" not in node or not isinstance(node["data"], dict):
+                        node["data"] = {}
+                    
+                    data = node["data"]
+                    data.pop("id", None)
+                    
+                    real_node = graph.nodes.get(node_id)
+                    data["kind"] = self._get_node_kind(node_id, real_node)
+
+                return {
+                    **json_graph, 
+                    "tools": tools_metadata,
+                    "functions": functions_metadata,
+                    "subagents": subagents_metadata
+                }
             except NotImplementedError as e:
                 raise HTTPException(422, detail="The graph does not support visualization") from e
 
@@ -980,6 +1081,222 @@ class AssistantService(TracedService):
             raise
         except Exception as e:
             raise HTTPException(400, f"Failed to get graph: {str(e)}") from e
+
+    def _get_node_description(self, node_id: str, node_obj: Any) -> str:
+        """노드 객체에서 설명을 추출 (Docstring 또는 메타데이터)"""
+        if not node_obj:
+            return ""
+            
+        # 1. 탐색 대상 후보군 수집 (우선순위 순)
+        objs_to_check = []
+        seen_ids = set()
+        
+        def collect_objs(target: Any, depth: int = 0):
+            if depth > 10 or target is None or id(target) in seen_ids:
+                return
+            seen_ids.add(id(target))
+            objs_to_check.append(target)
+            
+            # 탐색할 모든 가능성 있는 속성들 (afunc 추가)
+            for attr in ["func", "afunc", "bound", "runnable", "steps", "node", "callable"]:
+                if hasattr(target, attr):
+                    val = getattr(target, attr)
+                    if isinstance(val, (list, tuple)):
+                        for item in val:
+                            collect_objs(item, depth + 1)
+                    else:
+                        collect_objs(val, depth + 1)
+
+        collect_objs(node_obj)
+        
+        # 2. 수집된 객체들에서 설명 추출
+        generic_descs = [
+            "A node in a Pregel graph", 
+            "A much simpler version of RunnableLambda",
+            "A Runnable that can be invoked",
+            "A sequence of Runnables",
+            "Sequence of `Runnable` ",
+            "Implements the logic for sending writes",
+            "ChannelInvoke",
+            "ChannelWrite",
+            "This won't be invoked as a runnable",
+            "A Runnable that wraps a function",
+            "Sequence of Runnable",
+            "Sequence of `Runnable`"
+        ]
+        
+        # 탐색된 객체들을 역순(가장 깊은 곳부터)으로 확인하여 실제 함수에 우선순위 부여
+        for obj in reversed(objs_to_check):
+            # A2A 메타데이터 확인 (이미 한글화/커스텀됨)
+            if hasattr(obj, "_a2a_metadata") and (desc := obj._a2a_metadata.get("description")):
+                return desc
+                
+            # Docstring 확인
+            if hasattr(obj, "__doc__") and obj.__doc__:
+                doc = str(obj.__doc__).strip()
+                if doc and not any(generic in doc for generic in generic_descs):
+                    # functools.partial 기본 설명 제외
+                    if "partial(func, *args" in doc:
+                        continue
+                        
+                    lines = [line.strip() for line in doc.split("\n") if line.strip()]
+                    if not lines:
+                        continue
+                        
+                    # 상위 최대 3줄만 수집
+                    summary_lines = lines[:3]
+                    summary = " ".join(summary_lines)
+                    
+                    # 150자 내외로 자르고 말줄임표 추가
+                    if len(lines) > 3 or len(summary) > 150:
+                        if len(summary) > 150:
+                            summary = summary[:147].rstrip()
+                        return summary + "..."
+                    
+                    if summary and len(summary) > 5:
+                        return summary
+        
+        # 3. 마지막 수단: 가공된 이름 반환
+        if node_id and node_id not in ["__start__", "__end__"]:
+            readable = node_id.replace("_", " ").title()
+            return f"{readable} node"
+            
+        return ""
+
+    def _get_node_kind(self, node_id: str, node_obj: Any) -> str:
+        """노드의 종류 분류 (tool, function, subagent, start, end)"""
+        if node_id == "__start__":
+            return "start"
+        if node_id == "__end__":
+            return "end"
+        if not node_obj:
+            return "function"
+
+        # PregelNode인 경우 내부 객체 확인
+        objs_to_check = [node_obj]
+        for attr in ["bound", "runnable", "node"]:
+            if hasattr(node_obj, attr):
+                objs_to_check.append(getattr(node_obj, attr))
+
+        for obj in objs_to_check:
+            obj_type = type(obj).__name__
+            # 1. ToolNode 확인
+            if obj_type == "ToolNode" or hasattr(obj, "tools") or hasattr(obj, "tools_by_name"):
+                return "tool"
+            # 2. Subgraph (Pregel/CompiledGraph/CompiledStateGraph) 확인
+            if obj_type in ["CompiledStateGraph", "CompiledGraph", "Pregel"]:
+                return "subagent"
+
+        return "function"
+
+    async def get_assistant_graph_image(
+        self,
+        assistant_id: str,
+        user_identity: str,
+        org_id: str | None = None,
+    ) -> bytes:
+        """어시스턴트의 그래프 구조를 PNG 이미지로 반환
+        
+        LangGraph의 시각화 기능을 사용하여 그래프를 PNG 형식으로 렌더링합니다.
+        노드 종류별로 아이콘을 주입하여 가독성을 높입니다.
+        
+        Args:
+            assistant_id (str): 어시스턴트 고유 식별자
+            user_identity (str): 사용자 식별자
+            org_id (str | None): 조직 ID
+            
+        Returns:
+            bytes: PNG 이미지 바이너리 데이터
+            
+        Raises:
+            HTTPException(404): 어시스턴트를 찾을 수 없음
+            HTTPException(400): 이미지 생성 실패
+        """
+        stmt = select(AssistantORM).where(
+            or_(
+                AssistantORM.assistant_id == assistant_id,
+                AssistantORM.graph_id == assistant_id,
+            ),
+            _build_access_filter(user_identity, org_id, include_system=True),
+        )
+        assistant = await self.session.scalar(stmt)
+
+        if not assistant:
+            raise HTTPException(404, f"Assistant '{assistant_id}' not found")
+
+        try:
+            graph = await self.langgraph_service.get_graph(assistant.graph_id)
+            
+            # 시각화용 그래프 객체 생성
+            # xray=False (기본값)로 최상위 구조만 가져옴
+            drawable_graph = await graph.aget_graph(xray=False)
+            mermaid_str = drawable_graph.draw_mermaid()
+            
+            # Mermaid 구문에서 노드 이름에 아이콘 주입 (정규식 치환 방식)
+            import re
+            for node_id, node in drawable_graph.nodes.items():
+                if node_id == "__start__":
+                    mermaid_str = mermaid_str.replace("(<p>__start__</p>)", "([시작])")
+                    continue
+                if node_id == "__end__":
+                    mermaid_str = mermaid_str.replace("(<p>__end__</p>)", "([종료])")
+                    continue
+                    
+                real_node = graph.nodes.get(node_id)
+                kind = self._get_node_kind(node_id, real_node)
+                
+                icon = ""
+                if kind == "tool":
+                    icon = "🛠️ "
+                elif kind == "subagent":
+                    icon = "🤖 "
+                elif kind == "function":
+                    icon = "fa:fa-code "
+                
+                if icon:
+                    # Mermaid 노드 선언 패턴: node_id(Label), node_id[Label], node_id([Label]) 등
+                    label_to_find = getattr(node.data, "name", node_id)
+                    
+                    # 1. 정밀 매칭: ID와 Label이 정확히 일치하는 패턴
+                    pattern = rf"({re.escape(node_id)})((\(\[?|\[))({re.escape(label_to_find)})"
+                    replacement = rf"\1\2{icon}\4"
+                    
+                    if re.search(pattern, mermaid_str):
+                        mermaid_str = re.sub(pattern, replacement, mermaid_str)
+                    else:
+                        # 2. 조금 더 유연한 매칭: node_id(Anything) 패턴에서 (Anything) 부분을 자름
+                        # 예: subgraph_agent(...) -> subgraph_agent(🤖 ...)
+                        pattern_flexible = rf"({re.escape(node_id)})((\(\[?|\[))"
+                        replacement_flexible = rf"\1\2{icon}"
+                        if re.search(pattern_flexible, mermaid_str):
+                            mermaid_str = re.sub(pattern_flexible, replacement_flexible, mermaid_str)
+                        else:
+                            # 3. 최후의 수단: 단순히 라벨 자체를 치환 (위험할 수 있으나 ID와 대조하여 안전성 확보)
+                            mermaid_str = mermaid_str.replace(f"({label_to_find})", f"({icon}{label_to_find})")
+                            mermaid_str = mermaid_str.replace(f"[{label_to_find}]", f"[{icon}{label_to_find}]")
+
+            # 수정된 mermaid_str을 PNG로 렌더링
+            try:
+                # langgraph 버전에 따라 다를 수 있으나, 
+                # 보통 mermaid_str을 받아 처리하는 렌더러가 내부적으로 존재함
+                from langchain_core.runnables.graph import _render_mermaid_puml
+                return _render_mermaid_puml(mermaid_str, "png")
+            except ImportError:
+                # 폴백: 직접 mermaid.ink API 사용
+                import base64
+                import requests
+                
+                # Mermaid 구문을 압축/인코딩하여 mermaid.ink로 전송
+                # (간단하게 base64만 사용하는 경우)
+                base64_str = base64.b64encode(mermaid_str.encode("utf-8")).decode("utf-8")
+                url = f"https://mermaid.ink/img/{base64_str}"
+                response = requests.get(url)
+                if response.status_code == 200:
+                    return response.content
+                raise e # 렌더링 실패 시 원래 예외 발생
+            
+        except Exception as e:
+            raise HTTPException(400, f"Failed to generate graph image: {str(e)}") from e
 
     async def get_assistant_subgraphs(
         self,

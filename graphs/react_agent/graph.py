@@ -1,36 +1,14 @@
-"""ReAct 패턴을 활용한 추론-실행 에이전트 그래프 정의
+"""자율 실행 에이전트 (Standard)
 
-이 모듈은 LangGraph 기반의 ReAct(Reasoning and Action) 에이전트를 구현합니다.
-ReAct 패턴은 LLM이 추론(Reasoning)과 도구 실행(Action)을 반복하며 문제를 해결하는 방식입니다.
-
-ReAct 패턴 동작 흐름:
-1. 사용자 질문 입력
-2. LLM이 추론하고 필요한 도구 선택
-3. 선택된 도구 실행
-4. 도구 실행 결과를 LLM에 전달
-5. 2-4 반복하며 최종 답변 도출
-
-주요 구성 요소:
-• call_model - LLM 호출 노드 (추론 및 도구 선택)
-• tools - 도구 실행 노드 (ToolNode)
-• route_model_output - 조건부 라우팅 함수 (계속 실행 or 종료)
-• graph - 컴파일된 StateGraph 인스턴스
-
-그래프 구조:
-    __start__ → call_model ⇄ tools
-                     ↓
-                 __end__
-
-사용 요구사항:
-- 도구 호출(tool calling)을 지원하는 채팅 모델 필요
-- Runtime[Context]를 통해 모델 설정 및 시스템 프롬프트 주입
+사용자의 질문에 대해 최신 정보를 검색하고 계산하여 즉시 답변을 제공하는 범용 AI 비서입니다.
+ReAct(Reasoning and Action) 패턴을 사용하여 LLM이 추론과 도구 실행을 반복하며 문제를 해결합니다.
 """
 
 from datetime import UTC, datetime
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage
-from langgraph.graph import StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 
@@ -120,7 +98,7 @@ builder = StateGraph(State, input_schema=InputState, context_schema=Context)
 
 # 노드 1: call_model - LLM 호출 및 추론 노드
 # LLM이 대화 컨텍스트를 분석하고 다음 행동(도구 호출 or 답변) 결정
-builder.add_node(call_model)
+builder.add_node("call_model", call_model)
 
 # 노드 2: tools - 도구 실행 노드 (LangGraph의 ToolNode 활용)
 # LLM이 선택한 도구를 실제로 실행하고 결과를 상태에 추가
@@ -132,11 +110,11 @@ builder.add_node("tools", ToolNode(TOOLS))
 # ---------------------------------------------------------------------------
 
 # 진입점 설정: 그래프 시작 시 call_model 노드부터 실행
-# __start__는 LangGraph의 특수 노드로 그래프의 시작점을 의미
-builder.add_edge("__start__", "call_model")
+# START는 LangGraph의 특수 노드로 그래프의 시작점을 의미
+builder.add_edge(START, "call_model")
 
 
-def route_model_output(state: State) -> Literal["__end__", "tools"]:
+def route_model_output(state: State) -> Literal[END, "tools"]:
     """LLM 출력을 기반으로 다음 노드 결정 - ReAct 패턴의 조건부 라우팅
 
     이 함수는 ReAct 패턴의 핵심 분기 로직을 담당합니다.
@@ -175,7 +153,7 @@ def route_model_output(state: State) -> Literal["__end__", "tools"]:
     # 도구 호출이 없으면 그래프 종료
     # LLM이 최종 답변을 텍스트로만 반환했다는 의미 (더 이상 도구 실행 불필요)
     if not last_message.tool_calls:
-        return "__end__"
+        return END
 
     # 도구 호출이 있으면 tools 노드로 이동하여 실행
     # ReAct 패턴의 "Action" 단계 진입
@@ -205,3 +183,13 @@ builder.add_edge("tools", "call_model")
 # name="ReAct Agent"는 LangSmith 트레이싱 등에서 식별자로 사용됨
 # 컴파일 후 graph는 open_langgraph.json에서 참조되어 HTTP API로 노출됨
 graph = builder.compile(name="ReAct Agent")
+
+# 에이전트 메타데이터 설정 (UI 및 에이전트 간 통신용)
+graph._a2a_metadata = {
+    "name": "자율 실행 에이전트 (Standard)",
+    "description": "사용자의 질문을 분석하여 검색, 계산 등 필요한 도구를 스스로 선택하고 실행하여 가장 정확한 답변을 찾아내는 범용 AI 에이전트입니다.",
+    "capabilities": {
+        "ap.io.messages": True,
+        "ap.io.streaming": True,
+    }
+}

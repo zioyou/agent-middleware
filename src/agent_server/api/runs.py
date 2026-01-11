@@ -309,7 +309,7 @@ async def create_run(
     actual_checkpoint = request.checkpoint
     if request.input and actual_checkpoint and isinstance(actual_checkpoint, dict):
         if actual_checkpoint.get("checkpoint_id"):
-            print(f"[create_run] Clearing checkpoint_id for new turn input to prevent stale resumption.")
+            logger.info(f"Clearing checkpoint_id for new turn input to prevent stale resumption (thread_id={thread_id})")
             actual_checkpoint = actual_checkpoint.copy()
             actual_checkpoint["checkpoint_id"] = None
 
@@ -465,13 +465,15 @@ async def create_and_stream_run(
     actual_checkpoint = request.checkpoint
     if request.input and actual_checkpoint and isinstance(actual_checkpoint, dict):
         if actual_checkpoint.get("checkpoint_id"):
-            print(f"[create_and_stream_run] Clearing checkpoint_id for new turn input to prevent stale resumption.")
+            logger.info(f"Clearing checkpoint_id for new turn input to prevent stale resumption (thread_id={thread_id})")
             actual_checkpoint = actual_checkpoint.copy()
             actual_checkpoint["checkpoint_id"] = None
 
     # LangGraph 서비스 가져오기
     langgraph_service = get_langgraph_service()
-    print(f"[create_and_stream_run] Scheduling background task run_id={run_id} thread_id={thread_id}")
+    logger.info(
+        f"Scheduling background task run_id={run_id} thread_id={thread_id} user={user.identity}"
+    )
 
     # 어시스턴트 존재 여부를 검증하고 graph_id를 가져옵니다.
     # graph_id를 전달하면 결정론적 어시스턴트 ID로 매핑합니다.
@@ -1363,18 +1365,28 @@ async def execute_run_async(
                     # 튜플이 아닌 이벤트는 values 모드
                     final_output = raw_event
 
+        # ──────────────────────────────────────────────────────────────────────────
         # 스트림 완료 후 스레드 상태를 확인하여 interrupt 여부 판단
+        # ──────────────────────────────────────────────────────────────────────────
         # LangGraph의 interrupt()는 이벤트에 __interrupt__를 추가하지만,
-        # 더 확실한 방법은 스레드 상태의 'next' 필드를 확인하는 것
-        try:
-            thread_state = await graph.aget_state(run_config)
-            # 'next' 필드가 있으면 그래프가 중단되어 다음 노드를 기다리는 상태
-            if thread_state and hasattr(thread_state, 'next') and thread_state.next:
-                has_interrupt = True
-                print(f"[execute_run_async] Detected interrupt via thread state: next={thread_state.next}")
-        except Exception as e:
-            # thread state 확인 실패 시 기존 이벤트 기반 감지 결과 사용
-            print(f"[execute_run_async] Failed to check thread state: {e}")
+        # Docker 환경 등에서는 이 이벤트가 제대로 전달되지 않는 경우가 있음.
+        # 더 확실한 방법은 스레드 상태의 'next' 필드를 확인하는 것.
+        #
+        # 참고: LangGraph issue #1395 - Docker 환경에서 __interrupt__ 이벤트 누락 문제
+        #       https://github.com/langchain-ai/langgraph/issues/1395
+        # ──────────────────────────────────────────────────────────────────────────
+        if not has_interrupt:
+            try:
+                thread_state = await graph.aget_state(cast("RunnableConfig", run_config))
+                # 'next' 필드가 비어있지 않으면 그래프가 중단되어 다음 노드를 기다리는 상태
+                if thread_state and hasattr(thread_state, "next") and thread_state.next:
+                    has_interrupt = True
+                    logger.info(
+                        f"[execute_run_async] 스레드 상태로 interrupt 감지: run_id={run_id}, next={thread_state.next}"
+                    )
+            except Exception as e:
+                # 스레드 상태 확인 실패 시 기존 이벤트 기반 감지 결과 사용
+                logger.warning(f"[execute_run_async] 스레드 상태 확인 실패: {e}, 이벤트 기반 감지 결과 사용")
 
         if has_interrupt:
             await update_run_status(run_id, "interrupted", output=final_output or {}, session=session)

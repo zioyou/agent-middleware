@@ -15,6 +15,7 @@ def a2a_metadata(
     skills: list[dict[str, Any]] | None = None,
     icon_url: str | None = None,
     documentation_url: str | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> Callable:
     """
     Decorator to attach A2A metadata to a graph factory function.
@@ -52,6 +53,7 @@ def a2a_metadata(
                 "skills": skills,
                 "icon_url": icon_url,
                 "documentation_url": documentation_url,
+                "capabilities": capabilities,
             }
 
             return result
@@ -68,6 +70,7 @@ def attach_a2a_metadata(
     skills: list[dict[str, Any]] | None = None,
     icon_url: str | None = None,
     documentation_url: str | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> Any:
     """
     Attach A2A metadata to an existing graph.
@@ -97,5 +100,6 @@ def attach_a2a_metadata(
         "skills": skills,
         "icon_url": icon_url,
         "documentation_url": documentation_url,
+        "capabilities": capabilities,
     }
     return graph

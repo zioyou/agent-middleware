@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from langchain_core.messages import AIMessage
-from langgraph.graph import StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from react_agent import graph as react_graph
 from react_agent.context import Context
@@ -128,7 +128,7 @@ builder.add_node("no_stream", no_stream)
 
 # 엣지 연결: 선형 실행 흐름 정의
 # 1. 시작 → no_stream: 항상 전처리 노드를 먼저 거침
-builder.add_edge("__start__", "no_stream")
+builder.add_edge(START, "no_stream")
 
 # 2. no_stream → subgraph_agent: 전처리 후 서브그래프로 전달
 #    no_stream 노드의 응답이 메시지에 추가된 상태로 서브그래프 실행
@@ -136,7 +136,7 @@ builder.add_edge("no_stream", "subgraph_agent")
 
 # 3. subgraph_agent → 종료: 서브그래프 완료 후 메인 그래프 종료
 #    서브그래프(react_agent)의 최종 상태가 메인 그래프의 최종 상태가 됨
-builder.add_edge("subgraph_agent", "__end__")
+builder.add_edge("subgraph_agent", END)
 
 # ---------------------------------------------------------------------------
 # 그래프 컴파일
@@ -144,3 +144,14 @@ builder.add_edge("subgraph_agent", "__end__")
 # 빌더를 컴파일하여 실행 가능한 그래프 인스턴스 생성
 # name="Subgraph Agent"는 LangSmith 추적 및 디버깅에서 사용되는 식별자
 graph = builder.compile(name="Subgraph Agent")
+
+# 에이전트 메타데이터 설정 (UI 및 에이전트 간 통신용)
+graph._a2a_metadata = {
+    "name": "멀티 에이전트 (Subgraph)",
+    "description": "서브그래프 구조를 사용하여 복잡한 작업을 분담하고 협업하는 고급 에이전트 예시입니다.",
+    "capabilities": {
+        "ap.io.messages": True,
+        "ap.io.streaming": True,
+        "subgraphs": True,
+    }
+}

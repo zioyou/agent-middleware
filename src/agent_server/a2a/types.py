@@ -15,6 +15,7 @@ class A2AGraphMetadata:
     skills: list[dict[str, Any]] | None = None
     icon_url: str | None = None
     documentation_url: str | None = None
+    capabilities: dict[str, Any] | None = None
 
 
 class A2AConfig(TypedDict, total=False):

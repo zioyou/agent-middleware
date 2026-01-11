@@ -20,7 +20,7 @@ which are versioned configurations of your graph.
 ???+ example "Example"
 
     ```python
-    client = get_client(url="http://localhost:2024")
+    client = get_client(url="http://localhost:8002")
     assistant = await client.assistants.get("assistant_id_123")
     ```
 

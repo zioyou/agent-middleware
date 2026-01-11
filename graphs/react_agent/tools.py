@@ -22,6 +22,7 @@ from react_agent.context import Context
 # 공통 도구 import
 from common.tools import (
     search,
+    scrape_web_page,
     calculator,
     call_research_agent,
     COMMON_TOOLS
@@ -45,18 +46,6 @@ from common.tools import (
 # 원래 search 함수는 max_search_results를 컨텍스트에서 가져와야 했지만
 # 공통 도구는 기본값(3)을 사용하므로, 필요시 여기서 래핑 가능
 
-async def search_with_context(query: str) -> dict[str, Any]:
-    """컨텍스트를 사용하는 search 래퍼 (선택적)
-    
-    런타임 컨텍스트에서 max_search_results를 가져와 사용합니다.
-    현재는 공통 도구가 기본값을 사용하므로 이 래퍼는 선택사항입니다.
-    """
-    runtime = get_runtime(Context)
-    max_results = runtime.context.max_search_results
-    
-    # 공통 search 함수를 그대로 사용
-    # 필요시 max_results를 파라미터로 전달하도록 수정 가능
-    return await search(query)
 
 
 # ---------------------------------------------------------------------------

@@ -134,7 +134,7 @@ def get_rate_limit_key(request: Request) -> str:
     Returns:
         Rate limit 키 (예: "user:abc123" 또는 "ip:192.168.1.1")
     """
-    user = request.scope.get("user", None)
+    user = getattr(request, "user", None)
     if user and getattr(user, "is_authenticated", False):
         identity = getattr(user, "identity", None)
         if identity:
@@ -156,8 +156,7 @@ def get_org_rate_limit_key(request: Request) -> str:
     Returns:
         Rate limit 키 (예: "org:org123", "user:abc123", 또는 "ip:192.168.1.1")
     """
-    # Check scope['user'] instead of request.user to avoid AssertionError
-    user = request.scope.get("user", None)
+    user = getattr(request, "user", None)
     if user and getattr(user, "is_authenticated", False):
         # 조직 ID가 있으면 조직 기준으로 제한
         org_id = getattr(user, "org_id", None)

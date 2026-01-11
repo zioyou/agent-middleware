@@ -123,6 +123,12 @@ class LangGraphService(TracedService):
 
         self.config = cast("dict[str, Any]", loaded_config)
 
+        # 그래프 패키지들이 서로를 임포트할 수 있도록 sys.path에 graphs 디렉토리 추가
+        import sys
+        graphs_dir = str(Path(self.config_path).parent / "graphs")
+        if graphs_dir not in sys.path:
+            sys.path.append(graphs_dir)
+
         # 설정 파일에서 그래프 레지스트리 로드
         self._load_graph_registry()
 
@@ -199,24 +205,55 @@ class LangGraphService(TracedService):
         NS = ASSISTANT_NAMESPACE_UUID
         session_gen = get_session()
         session = await anext(session_gen)
+        # 메타데이터 추출을 위한 제너레이터 준비
+        base_url = self._get_base_url()
+        generator = AgentCardGenerator(base_url=base_url)
+
         try:
             for graph_id in self._graph_registry:
                 # deterministic UUID 생성
                 assistant_id = str(uuid5(NS, graph_id))
+                
+                # 그래프 로드 및 메타데이터(이름, 설명) 추출
+                try:
+                    graph = await self.get_graph(graph_id)
+                    agent_card = generator.generate_for_graph(graph_id, graph)
+                    name = agent_card.name
+                    description = agent_card.description
+                    # Extract capabilities to store in metadata
+                    capabilities = agent_card.capabilities.model_dump(exclude_none=True)
+                except Exception as e:
+                    # 로드 실패 시 기본값 사용
+                    name = graph_id
+                    description = f"Default assistant for graph '{graph_id}'"
+                    capabilities = {}
+                
+                metadata = {"_capabilities": capabilities}
+                
                 existing = await session.scalar(
                     select(AssistantORM).where(AssistantORM.assistant_id == assistant_id)
                 )
+                
                 if existing:
-                    # 이미 존재하면 스킵 (멱등성 보장)
+                    # 기존 시스템 어시스턴트 정보 업데이트 (동기화)
+                    existing.name = name
+                    existing.description = description
+                    # Update metadata with capabilities
+                    current_meta = dict(existing.metadata_dict or {})
+                    current_meta["_capabilities"] = capabilities
+                    existing.metadata_dict = current_meta
+                    session.add(existing)
                     continue
+                
                 # 새 기본 어시스턴트 생성
                 session.add(
                     AssistantORM(
                         assistant_id=assistant_id,
-                        name=graph_id,
-                        description=f"Default assistant for graph '{graph_id}'",
+                        name=name,
+                        description=description,
                         graph_id=graph_id,
                         config={},
+                        metadata_dict=metadata,
                         user_id="system",
                     )
                 )
@@ -332,6 +369,9 @@ class LangGraphService(TracedService):
                     "CompiledGraph",
                     base_graph.copy(update={"checkpointer": checkpointer_cm, "store": store_cm}),
                 )
+                # 커스텀 메타데이터 보존 (copy 시 누락됨)
+                if hasattr(base_graph, "_a2a_metadata"):
+                    compiled_graph._a2a_metadata = base_graph._a2a_metadata
             except Exception:
                 print(
                     f"⚠️  Pre-compiled graph '{graph_id}' does not support checkpointer injection; running without persistence"
@@ -391,6 +431,10 @@ class LangGraphService(TracedService):
             raise ValueError(f"Failed to load graph module: {file_path}")
 
         module = importlib.util.module_from_spec(spec)
+        # sys.modules에 등록하여 모듈 내부의 상대 임포트 및 메타데이터 추출(sys.modules 기반)이 가능하도록 함
+        import sys
+        module_name = f"graphs.{graph_id}"
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
 
         # export된 그래프 가져오기

@@ -299,71 +299,73 @@ class AgentSchemas(BaseModel):
 
 
 class AgentCapabilities(BaseModel):
-    """에이전트 기능 정의 모델 (Agent Protocol v0.2.0)
+    """에이전트 기능 정의 모델 (Agent Protocol v0.2.0 / ap.io.*)
 
     에이전트가 지원하는 기능들을 나타내는 capability 맵입니다.
-    클라이언트는 이 정보를 사용하여 에이전트의 기능을 사전에 파악할 수 있습니다.
+    Agent Protocol (ap.io.*) 표준과 LangGraph 확장 기능을 모두 포함합니다.
 
-    표준 기능 (Agent Protocol v0.2.0):
-    - streaming: 실시간 스트리밍 응답 지원 여부
-    - checkpoints: 체크포인트 기반 상태 관리 지원 여부
-    - store: 장기 메모리 저장소 지원 여부
+    표준 기능 (ap.io.*):
+    - ap_io_messages: Messages 입출력 지원 여부
+    - ap_io_streaming: 스트리밍 출력 지원 여부
 
-    LangGraph 확장 기능:
-    - human_in_the_loop: HITL (interrupt_before/after) 지원 여부
-    - subgraphs: 서브그래프 구성 지원 여부
-
-    사용 예:
-        capabilities = AgentCapabilities(
-            streaming=True,
-            checkpoints=True,
-            human_in_the_loop=True,
-            store=True
-        )
+    하위 호환성 및 확장:
+    - checkpoints: 체크포인트 기반 상태 관리
+    - store: 장기 메모리 저장소
+    - human_in_the_loop: HITL 지원
     """
 
-    # Agent Protocol v0.2.0 표준 기능
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+
+    # Agent Protocol 표준 (ap.io.*)
+    ap_io_messages: bool = Field(
+        True,
+        alias="ap.io.messages",
+        description="Whether the agent supports Messages as input/output/state.",
+    )
+    ap_io_streaming: bool = Field(
+        True,
+        alias="ap.io.streaming",
+        description="Whether the agent supports streaming output.",
+    )
+
+    # 하위 호환성 필드 (내부 사용 및 기존 클라이언트용)
     streaming: bool = Field(True, description="SSE 스트리밍 응답 지원")
     checkpoints: bool = Field(True, description="체크포인트 기반 상태 관리 지원")
     store: bool = Field(True, description="LangGraph Store 장기 메모리 지원")
 
-    # LangGraph 확장 기능 (스펙에는 없지만 유용한 기능)
+    # LangGraph 확장 기능
     human_in_the_loop: bool = Field(
-        True, description="HITL (interrupt_before/after) 지원 - LangGraph 확장"
+        True, description="HITL (interrupt_before/after) 지원"
     )
-    subgraphs: bool = Field(True, description="서브그래프 구성 지원 - LangGraph 확장")
+    subgraphs: bool = Field(True, description="서브그래프 구성 지원")
 
 
-class Agent(Assistant):
-    """에이전트 엔티티 모델 (Agent Protocol v0.2.0)
+class Agent(BaseModel):
+    """에이전트 엔티티 모델 (Agent Protocol v0.1.6)
 
-    Assistant 모델을 확장하여 Agent Protocol v0.2.0 스펙을 준수합니다.
-    /agents/* 엔드포인트에서 사용되며, 기존 /assistants/* 와 호환됩니다.
+    Assistant 모델의 데이터를 Agent Protocol 표준 형식으로 제공합니다.
+    /agents/* 엔드포인트의 응답 모델로 사용됩니다.
 
-    추가 필드:
-    - capabilities: 에이전트가 지원하는 기능 맵
-
-    하위 호환성:
-    - 모든 Assistant 필드를 상속
-    - capabilities 필드만 추가됨
-    - /assistants/* 응답을 Agent로 변환 가능
-
-    사용 예:
-        # Assistant를 Agent로 변환
-        assistant = await get_assistant(assistant_id)
-        agent = Agent(
-            **assistant.model_dump(),
-            capabilities=AgentCapabilities()
-        )
-
-    참고:
-        - capabilities는 기본값으로 모든 기능이 활성화됨
-        - 특정 그래프가 기능을 지원하지 않는 경우 개별 비활성화 가능
+    필드 매핑:
+    - agent_id: Assistant.assistant_id와 동일
+    - name, description, metadata: Assistant 필드 상속
+    - capabilities: Agent Protocol 표준(ap.io.*) 포함
     """
 
-    # Agent Protocol v0.2.0 추가 필드
+    agent_id: str = Field(..., validation_alias="assistant_id", description="에이전트 고유 식별자")
+    name: str = Field(..., description="에이전트 이름")
+    description: str | None = Field(None, description="에이전트 설명")
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_dict")
     capabilities: AgentCapabilities = Field(
         default_factory=AgentCapabilities, description="에이전트 지원 기능 맵"
+    )
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
     )
 
 

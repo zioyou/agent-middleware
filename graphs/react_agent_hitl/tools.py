@@ -21,7 +21,9 @@ from react_agent_hitl.context import Context
 # 공통 도구 import
 from common.tools import (
     search,
+    scrape_web_page,
     calculator,
+    call_research_agent,
     COMMON_TOOLS
 )
 
@@ -40,11 +42,10 @@ from common.tools import (
 # 도구 목록 (LangGraph 도구 바인딩용)
 # ---------------------------------------------------------------------------
 
-# 옵션 1: 모든 공통 도구 사용 (권장 - 테스트 용이)
-TOOLS: list[Callable[..., Any]] = [search, calculator]
-
-# 옵션 2: HITL에서 특정 도구만 사용
-# TOOLS: list[Callable[..., Any]] = [calculator]  # search 제외
-
-# 참고: call_research_agent도 사용 가능하지만 HITL 테스트를 위해서는
-# 단순한 도구(calculator, search)가 더 적합합니다.
+# 모든 공통 도구 사용 (Tavily 포함)
+TOOLS: list[Callable[..., Any]] = [
+    search,
+    scrape_web_page,
+    calculator,
+    call_research_agent
+]

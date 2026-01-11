@@ -15,77 +15,112 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-# DuckDuckGo 검색 (무료, API 키 불필요)
+
+# Tavily 검색 (API 키 필요)
 try:
-    from duckduckgo_search import DDGS
-    DDGS_AVAILABLE = True
+    from tavily import TavilyClient
+    TAVILY_AVAILABLE = True
 except ImportError:
-    DDGS_AVAILABLE = False
+    TAVILY_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
 # 웹 검색 도구
 # ---------------------------------------------------------------------------
 
+
+
 async def search(query: str) -> dict[str, Any]:
-    """[최우선 필수 도구] DuckDuckGo를 사용한 기본 웹 검색
+    """[고성능 추천 도구] 웹 검색을 통한 실시간 정보 수집
     
-    모든 정보 탐색의 첫 번째 단계로 반드시 사용하십시오.
-    간단한 사실 확인, 최신 뉴스 조회, 일반적인 질문에 대해 가장 먼저 호출해야 하는 도구입니다.
+    최신 주가, 뉴스, 기술 정보 등 외부 지식이 필요한 질문에 대해 사용하십시오.
+    AI가 이해하기 좋은 형식으로 정제된 검색 결과를 반환합니다.
 
     Args:
-        query (str): 검색할 질의어 또는 키워드
+        query (str): 검색할 질의어
 
     Returns:
-        dict[str, Any]: 검색 결과
-            - query: 입력받은 검색 쿼리
-            - results: 검색 결과 리스트
-            - answer: 요약 답변 (있는 경우)
-
-    예시:
-        results = await search("LangGraph 최신 기능")
+        dict[str, Any]: 검색 결과 (results, query)
     """
-    # DuckDuckGo 패키지 사용 가능 여부 확인
-    if not DDGS_AVAILABLE:
-        return {
-            "query": query,
-            "error": "DuckDuckGo package not installed. Installing...",
-            "results": f"Please restart server after installation"
-        }
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return {"error": "TAVILY_API_KEY not found in environment variables."}
+    
+    if not TAVILY_AVAILABLE:
+        return {"error": "tavily-python package not installed."}
 
     try:
-        # DuckDuckGo 검색 수행 (동기 함수를 비동기 컨텍스트에서 호출)
-        with DDGS() as ddgs:
-            # 텍스트 검색 (최대 5개 결과)
-            search_results = list(ddgs.text(query, max_results=5))
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=api_key)
+        
+        # Tavily 검색 수행 (search_depth="advanced"로 심층 검색)
+        response = client.search(query, search_depth="advanced", max_results=5)
+        
+        formatted_results = []
+        for result in response.get("results", []):
+            formatted_results.append({
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": result.get("content", ""), # Tavily는 본문 요약을 잘 제공함
+                "score": result.get("score", 0)
+            })
             
-            # 결과 포맷팅
-            formatted_results = []
-            for result in search_results:
-                formatted_results.append({
-                    "title": result.get("title", ""),
-                    "url": result.get("href", ""),
-                    "content": result.get("body", ""),
-                })
-            
-            # 첫 번째 결과의 내용을 요약으로 사용
-            answer = search_results[0].get("body", "") if search_results else ""
-            
-            return {
-                "query": query,
-                "results": formatted_results,
-                "answer": answer,
-            }
-    except Exception as e:
-        # 오류 발생 시 안전하게 처리
-        print(f"DuckDuckGo Search Error: {e}")
-        import traceback
-        traceback.print_exc()
         return {
             "query": query,
-            "error": str(e),
-            "results": f"Search failed: {e}"
+            "results": formatted_results,
+            "answer": response.get("answer", "")
         }
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return {"query": query, "error": str(e)}
+
+
+async def scrape_web_page(url: str) -> dict[str, Any]:
+    """웹 페이지의 본문 텍스트를 읽어오는 도구
+    
+    검색 결과(search, tavily_search) 중 상세 분석이 필요한 URL이 있을 때 사용하십시오.
+    웹사이트에 직접 접속하여 전체 내용을 읽어오므로, 검색 엔진 요약보다 훨씬 자세한 정보를 얻을 수 있습니다.
+
+    Args:
+        url (str): 접속할 웹페이지 주소
+
+    Returns:
+        dict[str, Any]: 페이지 내용 (url, content)
+    """
+    import httpx
+    import re
+    
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            
+            # HTML에서 간단하게 텍스트만 추출 (스크립트, 스타일 태그 제외)
+            html = response.text
+            
+            # 1. 불필요한 태그 제거
+            html = re.sub(r'<(script|style|header|footer|nav|iframe)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            
+            # 2. 모든 HTML 태그 제거
+            text = re.sub(r'<[^>]+>', ' ', html)
+            
+            # 3. 연속된 공백 및 줄바꿈 정리
+            text = re.sub(r'\s+', ' ', text).strip()
+            
+            # 4. 너무 긴 경우 자르기 (토큰 제한 고려)
+            content = text[:8000] 
+            
+            return {
+                "url": url,
+                "content": content,
+                "length": len(content)
+            }
+    except Exception as e:
+        print(f"Scraping Error ({url}): {e}")
+        return {"url": url, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +299,7 @@ async def call_research_agent(query: str) -> dict[str, Any]:
 
 COMMON_TOOLS: list[Callable[..., Any]] = [
     search,
+    scrape_web_page,
     calculator,
     call_research_agent
 ]
