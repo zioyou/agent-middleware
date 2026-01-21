@@ -108,7 +108,7 @@ async def create_agent(
 
     Args:
         request (AssistantCreate): 에이전트 생성 요청 데이터
-            - graph_id: open_langgraph.json에 정의된 그래프 ID (필수)
+            - graph_id: agents.json에 정의된 그래프 ID (필수)
             - name: 에이전트 이름 (선택)
             - config: LangGraph 설정 (선택)
             - metadata: 사용자 정의 메타데이터 (선택)

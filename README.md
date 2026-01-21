@@ -1,26 +1,12 @@
-# Open LangGraph Platform
+# Agent Middleware Platform
 
 셀프 호스팅 AI 에이전트 백엔드. 벤더 종속 없이 LangGraph의 강력한 기능을 활용하세요.  
 LangGraph Platform을 자체 인프라로 대체하세요.  
 에이전트 오케스트레이션을 완전히 제어하고자 하는 개발자를 위해 FastAPI + PostgreSQL로 구축되었습니다.
 
-**Agent Protocol 준수**: Open LangGraph는 프로덕션 환경에서 LLM 에이전트를 제공하기 위한 오픈소스 표준인 [Agent Protocol](https://github.com/langchain-ai/agent-protocol) 사양을 구현합니다.
+**Agent Protocol 준수**: Agent Middleware는 프로덕션 환경에서 LLM 에이전트를 제공하기 위한 오픈소스 표준인 [Agent Protocol](https://github.com/langchain-ai/agent-protocol) 사양을 구현합니다.
 
 ---
-
-## 왜 LangSmith Deployment 대신 Open LangGraph Platform 을 선택해야할까요?
-
-| 기능                | LangGraph Platform         | Open LangGraph (셀프 호스팅)                               |
-| ---------------------- | -------------------------- | ------------------------------------------------- |
-| **비용**               | 월 $$$             | **무료** (셀프 호스팅, 인프라 비용만 발생)           |
-| **데이터 제어**       | 타사 호스팅         | **자체 인프라**                           |
-| **벤더 종속**     | 높은 의존성            | **제로 종속**                                  |
-| **커스터마이징**      | 플랫폼 제한사항       | **완전한 제어**                                  |
-| **API 호환성**  | LangGraph SDK              | **동일한 LangGraph SDK**                            |
-| **인증**     | Lite: 커스텀 인증 불가       | **커스텀 인증** (JWT/OAuth/Firebase/NoAuth)       |
-| **데이터베이스 소유권** | 자체 데이터베이스 불가 | **BYO Postgres** (자격 증명 및 스키마 소유) |
-| **Human-in-the-Loop** | 지원 | **완전 지원** (승인 게이트, 사용자 개입) |
-| **관찰성/추적**  | LangSmith 강제   | **선택 가능** ([Langfuse](docs/langfuse-usage.md)) |
 
 ## 핵심 이점
 
@@ -46,8 +32,8 @@ LangGraph Platform을 자체 인프라로 대체하세요.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 클론 및 설정
-git clone https://github.com/HyunjunJeon/open-langgraph-platform.git
-cd open-langgraph
+git clone https://github.com/shindalsoo/agent-middleware.git
+cd agent-middleware
 
 # 환경 및 의존성 동기화
 uv sync --all-extras
@@ -60,30 +46,27 @@ source .venv/bin/activate  # Mac/Linux
 cp .env.example .env
 
 # 시작 (데이터베이스 + 마이그레이션 + 서버)
-docker compose up open-langgraph
+docker compose up agent-middleware
 ```
 
 ### Checks
 
 ```bash
 # 헬스 체크
-curl http://localhost:8000/health
-
-# 인터랙티브 API 문서
-open http://localhost:8000/docs
+curl http://localhost:8002/health
 ```
 
 ## Compatible Web UI Toolkie
 
-Open LangGraph는 LangGraph API를 지원하는 여러 프론트엔드와 호환됩니다.
+Agent-Middleware는 Agent-Protocol을 지원하는 여러 프론트엔드와 호환됩니다.
 
 ### Agent Chat UI (Official LangChain's Chat UI)
 
 설정 예시:
 ```bash
 # Agent Chat UI 프로젝트에서
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_ASSISTANT_ID=agent
+NEXT_PUBLIC_API_URL=http://localhost:8002
+NEXT_PUBLIC_ASSISTANT_ID=resoning
 ```
 
 - Agent Chat UI GitHub: https://github.com/langchain-ai/agent-chat-ui
@@ -132,10 +115,10 @@ function YourAgentInterface() {
 }
 ```
 
-백엔드 준비(Open LangGraph Platform):
+백엔드 준비(Agent Middleware Platform):
 ```bash
-docker compose up open-langgraph-platform
-# http://localhost:8000에서 에이전트가 동작하며 CopilotKit이 SSE로 연결합니다
+docker compose up agent-middleware
+# http://localhost:8002에서 에이전트가 동작하며 CopilotKit이 SSE로 연결합니다
 ```
 
 지원 기능 요약:
@@ -167,24 +150,23 @@ SDK      API    Management      Storage
 - **LangGraph**: 상태 관리 및 그래프 실행
 - **PostgreSQL**: 지속적인 체크포인트 및 메타데이터
 - **Agent Protocol**: LLM 에이전트 API를 위한 오픈소스 사양
-- **Config-driven**: 그래프 정의를 위한 `open_langgraph.json`
+- **Config-driven**: 그래프 정의를 위한 `agents.json`
 
 ## 프로젝트 구조
 
 ```text
-open-langgraph-platform/
-├── open_langgraph.json  # 그래프 구성
+agent-middleware-platform/
+├── agents.json  # 그래프 구성
 ├── auth.py              # 인증 설정
-├── graphs/              # 에이전트 정의
-│   └── react_agent/     # ReAct 에이전트 예제
+├── agents/              # 에이전트 정의
+│   └── agent_sample/     # ReAct 에이전트 예제
 ├── src/agent_server/    # FastAPI 애플리케이션
 │   ├── main.py         # 애플리케이션 진입점
 │   ├── core/           # 데이터베이스 및 인프라
 │   ├── models/         # Pydantic 스키마
 │   ├── services/       # 비즈니스 로직
 │   └── utils/          # 헬퍼 함수
-├── tests/              # 테스트 스위트
-└── deployments/        # Docker 및 K8s 구성
+└── tests/              # 테스트 스위트
 ```
 
 ## 구성
@@ -206,7 +188,7 @@ AUTH_TYPE=noop  # noop, custom
 
 # 서버
 HOST=0.0.0.0
-PORT=8000
+PORT=8002
 DEBUG=true
 
 # LLM 프로바이더
@@ -217,16 +199,12 @@ OPENAI_API_KEY=sk-...
 
 ### 그래프 구성
 
-`open_langgraph.json`은 에이전트 그래프를 정의합니다:
+`agents.json`은 에이전트 그래프를 정의합니다:
 
 ```json
 {
   "graphs": {
-    "agent": "./graphs/react_agent/graph.py:graph"
+    "resoning": "./agents/agent_reason/graph.py:graph"
   }
 }
 ```
-
-## 로드맵
-
-자세한 계획과 진행 상황은 [ROADMAP.md](ROADMAP.md)를 참조하세요.

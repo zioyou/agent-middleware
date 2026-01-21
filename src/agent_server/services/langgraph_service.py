@@ -1,7 +1,7 @@
 """LangGraph 통합 서비스 및 그래프 관리자
 
 이 모듈은 Open LangGraph의 LangGraph 그래프 로딩, 설정 관리, 실행 설정 생성을 담당합니다.
-open_langgraph.json에서 그래프 정의를 읽어 동적으로 로드하고,
+agents.json에서 그래프 정의를 읽어 동적으로 로드하고,
 각 그래프에 대한 기본 어시스턴트를 자동으로 생성합니다.
 
 주요 구성 요소:
@@ -21,6 +21,7 @@ open_langgraph.json에서 그래프 정의를 읽어 동적으로 로드하고,
 import importlib.util
 import json
 import os
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -45,11 +46,11 @@ class GraphDefinition(TypedDict):
 class LangGraphService(TracedService):
     """LangGraph 그래프 로딩 및 설정 관리 서비스
 
-    이 클래스는 open_langgraph.json 설정 파일을 읽어 LangGraph 그래프를 동적으로 로드하고,
+    이 클래스는 agents.json 설정 파일을 읽어 LangGraph 그래프를 동적으로 로드하고,
     각 그래프에 대한 기본 어시스턴트를 자동으로 생성합니다.
 
     주요 기능:
-    - 그래프 레지스트리 관리: open_langgraph.json에서 그래프 정의 로드
+    - 그래프 레지스트리 관리: agents.json에서 그래프 정의 로드
     - 그래프 캐싱: 로드된 그래프를 메모리에 캐시하여 성능 향상
     - 자동 컴파일: 그래프를 Postgres 체크포인터와 함께 컴파일
     - 기본 어시스턴트 생성: 각 그래프에 대해 deterministic UUID로 어시스턴트 생성
@@ -60,8 +61,8 @@ class LangGraphService(TracedService):
     - 캐싱: 컴파일된 그래프를 메모리에 저장하여 재사용
     """
 
-    def __init__(self, config_path: str = "open_langgraph.json") -> None:
-        # 설정 파일 경로 (OPEN_LANGGRAPH_CONFIG 환경 변수나 open_langgraph.json으로 오버라이드 가능)
+    def __init__(self, config_path: str = "agents.json") -> None:
+        # 설정 파일 경로 (OPEN_LANGGRAPH_CONFIG 환경 변수나 agents.json으로 오버라이드 가능)
         self.config_path = Path(config_path)
         self.config: dict[str, Any] | None = None
         # 그래프 레지스트리: graph_id -> {file_path, export_name}
@@ -72,14 +73,14 @@ class LangGraphService(TracedService):
     async def initialize(self) -> None:
         """설정 파일을 로드하고 그래프 레지스트리 설정
 
-        open_langgraph.json 설정 파일을 찾아 로드한 후 그래프 레지스트리를 초기화합니다.
+        agents.json 설정 파일을 찾아 로드한 후 그래프 레지스트리를 초기화합니다.
         각 그래프에 대해 기본 어시스턴트를 자동으로 생성하여
         클라이언트가 graph_id만으로 그래프를 실행할 수 있도록 합니다.
 
         설정 파일 해석 우선순위:
         1) OPEN_LANGGRAPH_CONFIG 환경 변수 (절대 경로 또는 상대 경로)
         2) 생성자에 명시된 self.config_path (존재하는 경우)
-        3) 현재 작업 디렉토리의 open_langgraph.json
+        3) 현재 작업 디렉토리의 agents.json
         4) 현재 작업 디렉토리의 langgraph.json (fallback)
 
         동작 흐름:
@@ -99,17 +100,19 @@ class LangGraphService(TracedService):
         # 2) 생성자에 제공된 경로가 존재하면 사용
         elif self.config_path and Path(self.config_path).exists():
             resolved_path = Path(self.config_path)
-        # 3) open_langgraph.json이 현재 디렉토리에 있으면 사용
-        elif Path("open_langgraph.json").exists():
-            resolved_path = Path("open_langgraph.json")
-        # 4) langgraph.json으로 fallback
-        else:
+        # 3) agents.json이 현재 디렉토리에 있으면 사용
+        elif Path("agents.json").exists():
+            resolved_path = Path("agents.json")
+        # 4) agents.json (레거시 호환성)
+        elif Path("agents.json").exists():
+            resolved_path = Path("agents.json")
+        # 5) langgraph.json (대체 이름)
+        elif Path("langgraph.json").exists():
             resolved_path = Path("langgraph.json")
-
-        if not resolved_path.exists():
-            raise ValueError(
-                "Configuration file not found. Expected one of: "
-                "OPEN_LANGGRAPH_CONFIG path, ./open_langgraph.json, or ./langgraph.json"
+        else:
+            raise FileNotFoundError(
+                "Could not find configuration file. Please ensure one of the following exists: "
+                "OPEN_LANGGRAPH_CONFIG path, ./agents.json, ./agents.json, or ./langgraph.json"
             )
 
         # 선택된 경로를 저장하여 나중에 참조할 수 있도록 함
@@ -123,14 +126,17 @@ class LangGraphService(TracedService):
 
         self.config = cast("dict[str, Any]", loaded_config)
 
-        # 그래프 패키지들이 서로를 임포트할 수 있도록 sys.path에 graphs 디렉토리 추가
-        import sys
-        graphs_dir = str(Path(self.config_path).parent / "graphs")
-        if graphs_dir not in sys.path:
-            sys.path.append(graphs_dir)
+        # 에이전트들이 'agents' 패키지 아래의 서브패키지로 로드될 수 있도록 프로젝트 루트 디렉토리를 sys.path에 추가
+        # 이를 통해 'import agents.common' 또는 'from ..common import ...' (상대 임포트)가 정상 작동함
+        root_dir = str(self.config_path.parent.resolve())
+        if root_dir not in sys.path:
+            sys.path.append(root_dir)
 
         # 설정 파일에서 그래프 레지스트리 로드
         self._load_graph_registry()
+
+        # [신규] 외부 Agent Protocol 서버에서 에이전트 로드
+        await self._load_external_sources()
 
         # 각 그래프에 대해 deterministic UUID로 기본 어시스턴트 생성
         # 클라이언트가 graph_id를 직접 전달할 수 있도록 함
@@ -140,7 +146,7 @@ class LangGraphService(TracedService):
         await self._register_a2a_agents()
 
     def _load_graph_registry(self) -> None:
-        """open_langgraph.json에서 그래프 정의를 파싱하여 레지스트리에 등록
+        """agents.json에서 그래프 정의를 파싱하여 레지스트리에 등록
 
         설정 파일의 "graphs" 섹션을 읽어 각 그래프의 파일 경로와
         export 이름을 파싱합니다.
@@ -173,6 +179,116 @@ class LangGraphService(TracedService):
                 "file_path": file_path,
                 "export_name": export_name,
             }
+
+    async def _load_external_sources(self) -> None:
+        """외부 Agent Protocol 서버에서 에이전트 로드
+        
+        agents.json의 external_sources 설정을 읽어 각 외부 서버에서
+        에이전트 목록과 설정을 가져와 동적 그래프를 생성합니다.
+        
+        동작 흐름:
+        1. external_sources 설정 읽기
+        2. 각 소스에서 POST /agents/search로 에이전트 목록 가져오기
+        3. 각 에이전트에 대해 GET /agents/{id}/config로 설정 가져오기
+        4. DynamicGraphFactory로 그래프 생성
+        5. 레지스트리 및 캐시에 등록
+        
+        참고:
+        - 외부 서버 연결 실패 시 해당 소스만 스킵 (내부 에이전트는 정상 작동)
+        - 개별 에이전트 로드 실패 시 해당 에이전트만 스킵
+        """
+        from .external_source_service import external_source_service
+        from .dynamic_graph_factory import DynamicGraphFactory
+        
+        if self.config is None:
+            return
+        
+        external_sources = self.config.get("external_sources", [])
+        
+        if not external_sources:
+            return
+        
+        print("📡 Loading external agent sources...")
+        
+        total_loaded = 0
+        
+        for source in external_sources:
+            # 비활성화된 소스 스킵
+            if not source.get("enabled", True):
+                print(f"  ⏭️  Skipped (disabled): {source.get('name', source['url'])}")
+                continue
+            
+            url = source["url"]
+            name = source.get("name", url)
+            
+            print(f"  📥 Fetching from: {name} ({url})")
+            
+            # 소스 등록
+            external_source_service.register_source(url, name)
+            
+            # 에이전트 목록 가져오기
+            agents = await external_source_service.fetch_agents(url)
+            
+            if not agents:
+                print(f"     ⚠️  No agents found or connection failed")
+                continue
+            
+            # 각 에이전트 로드
+            for agent in agents:
+                try:
+                    # 에이전트 설정 가져오기
+                    config = await external_source_service.fetch_agent_config(url, agent.agent_id)
+                    
+                    if config is None:
+                        print(f"     ⚠️  Failed to get config: {agent.agent_id}")
+                        continue
+                    
+                    # 동적 그래프 생성
+                    graph = DynamicGraphFactory.create_graph(config)
+                    
+                    # 체크포인터 및 스토어 주입 (상태 영속성을 위해 필수)
+                    from ..core.database import db_manager
+                    
+                    checkpointer_cm = await db_manager.get_checkpointer()
+                    store_cm = await db_manager.get_store()
+                    
+                    try:
+                        # 이미 컴파일된 그래프에 체크포인터 주입
+                        graph_with_memory = graph.copy(update={
+                            "checkpointer": checkpointer_cm, 
+                            "store": store_cm
+                        })
+                        
+                        # A2A 메타데이터 보존
+                        if hasattr(graph, "_a2a_metadata"):
+                            graph_with_memory._a2a_metadata = graph._a2a_metadata
+                            
+                        graph = graph_with_memory
+                    except Exception as e:
+                        print(f"     ⚠️  Failed to inject checkpointer for {agent.agent_id}: {e}")
+                    
+                    # 외부 에이전트 ID (충돌 방지를 위해 prefix 추가)
+                    external_graph_id = f"external:{agent.agent_id}"
+                    
+                    # 레지스트리에 등록
+                    self._graph_registry[external_graph_id] = {
+                        "file_path": f"external:{url}",
+                        "export_name": agent.agent_id,
+                        "source_type": "external",
+                        "source_url": url,
+                    }
+                    
+                    # 캐시에 저장
+                    self._graph_cache[external_graph_id] = graph
+                    
+                    print(f"     ✅ Loaded: {agent.name} ({external_graph_id})")
+                    total_loaded += 1
+                    
+                except Exception as e:
+                    print(f"     ⚠️  Failed to load {agent.agent_id}: {e}")
+        
+        if total_loaded > 0:
+            print(f"📡 Loaded {total_loaded} external agents")
 
     async def _ensure_default_assistants(self) -> None:
         """각 그래프에 대해 deterministic UUID로 기본 어시스턴트 생성
@@ -295,7 +411,18 @@ class LangGraphService(TracedService):
 
                 # AgentCard 생성 및 등록
                 agent_card = generator.generate_for_graph(graph_id, graph)
-                await agent_registry_service.register_agent(graph_id, agent_card)
+                
+                # 외부 에이전트인지 확인
+                graph_info = self._graph_registry.get(graph_id, {})
+                source_type = graph_info.get("source_type", "internal")
+                source_url = graph_info.get("source_url")
+                
+                await agent_registry_service.register_agent(
+                    graph_id, 
+                    agent_card,
+                    source_type=source_type,
+                    source_url=source_url,
+                )
                 registered_count += 1
 
             except Exception as e:
@@ -330,7 +457,7 @@ class LangGraphService(TracedService):
         6. 컴파일된 그래프 반환
 
         Args:
-            graph_id (str): 로드할 그래프 ID (open_langgraph.json에 정의)
+            graph_id (str): 로드할 그래프 ID (agents.json에 정의)
             force_reload (bool): True면 캐시 무시하고 재로드 (기본값: False)
 
         Returns:
@@ -426,16 +553,26 @@ class LangGraphService(TracedService):
             raise ValueError(f"Graph file not found: {file_path}")
 
         # 그래프 모듈 동적 import
-        spec = importlib.util.spec_from_file_location(f"graphs.{graph_id}", str(file_path.resolve()))
-        if spec is None or spec.loader is None:
-            raise ValueError(f"Failed to load graph module: {file_path}")
+        # 프로젝트 루트를 기준으로 모듈 이름을 생성 (예: agents/agent_reason/graph.py -> agents.agent_reason.graph)
+        # 이를 통해 패키지 내부의 상대 임포트(from ..common import ...)가 정상 작동함
+        try:
+            root_dir = self.config_path.parent.resolve()
+            rel_path = file_path.resolve().relative_to(root_dir)
+            module_name = ".".join(rel_path.with_suffix("").parts)
+        except Exception:
+            # 상대 경로 계산 실패 시 fallback
+            module_name = f"agents_dynamic.{graph_id}"
 
-        module = importlib.util.module_from_spec(spec)
-        # sys.modules에 등록하여 모듈 내부의 상대 임포트 및 메타데이터 추출(sys.modules 기반)이 가능하도록 함
-        import sys
-        module_name = f"graphs.{graph_id}"
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        # 이미 로드된 모듈이 있으면 제거하여 최신 코드가 반영되도록 함 (핫 리로드 지원)
+        if module_name in sys.modules:
+            del sys.modules[module_name]
+
+        # 표준 import 메커니즘 사용 (상대 임포트 및 패키지 초기화 __init__.py를 올바르게 처리)
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as e:
+            # import_module 실패 시 상세 에러와 함께 fallback 시도 또는 raise
+            raise ValueError(f"Failed to import graph module '{module_name}' from {file_path}: {e}")
 
         # export된 그래프 가져오기
         export_name = graph_info["export_name"]
@@ -486,11 +623,77 @@ class LangGraphService(TracedService):
         else:
             self._graph_cache.clear()
 
+    async def reload_external_sources(self) -> int:
+        """외부 에이전트 소스를 런타임에 리로드
+        
+        웹 UI에서 버튼 클릭으로 호출되어 서버 재시작 없이
+        외부 에이전트 목록을 갱신합니다.
+        
+        동작 흐름:
+        1. 기존 외부 에이전트 정리 (레지스트리, 캐시, DB, A2A 레지스트리)
+        2. external_sources에서 에이전트 다시 로드
+        3. 어시스턴트 및 A2A 레지스트리 갱신
+        
+        Returns:
+            int: 로드된 외부 에이전트 수
+        """
+        from sqlalchemy import delete
+        from uuid import uuid5
+        from ..constants import ASSISTANT_NAMESPACE_UUID
+        from ..core.orm import Assistant as AssistantORM, get_session
+        from .agent_registry_service import agent_registry_service
+        
+        # 1. 기존 외부 에이전트 정리
+        external_graph_ids = [
+            gid for gid in list(self._graph_registry.keys()) 
+            if gid.startswith("external:")
+        ]
+        
+        # 1a. 레지스트리 및 캐시에서 제거
+        for gid in external_graph_ids:
+            self._graph_registry.pop(gid, None)
+            self._graph_cache.pop(gid, None)
+        
+        # 1b. DB에서 외부 어시스턴트 삭제
+        if external_graph_ids:
+            session_gen = get_session()
+            session = await anext(session_gen)
+            try:
+                # graph_id가 'external:'로 시작하는 어시스턴트 삭제
+                await session.execute(
+                    delete(AssistantORM).where(
+                        AssistantORM.graph_id.like("external:%")
+                    )
+                )
+                await session.commit()
+            finally:
+                await session.close()
+        
+        # 1c. A2A 레지스트리에서 외부 에이전트 제거
+        for gid in external_graph_ids:
+            await agent_registry_service.unregister_agent(gid)
+        
+        print(f"🔄 Cleared {len(external_graph_ids)} external agents (registry + DB)")
+        
+        # 2. 외부 소스에서 다시 로드
+        await self._load_external_sources()
+        
+        # 3. 어시스턴트 및 A2A 레지스트리 갱신
+        await self._ensure_default_assistants()
+        await self._register_a2a_agents()
+        
+        # 로드된 외부 에이전트 수 반환
+        new_external_count = sum(
+            1 for gid in self._graph_registry.keys() 
+            if gid.startswith("external:")
+        )
+        return new_external_count
+
     def get_config(self) -> dict[str, Any] | None:
         """로드된 설정 파일 내용 반환
 
         Returns:
-            dict[str, Any] | None: open_langgraph.json의 전체 내용
+            dict[str, Any] | None: agents.json의 전체 내용
         """
         return self.config
 
@@ -498,7 +701,7 @@ class LangGraphService(TracedService):
         """설정 파일의 dependencies 섹션 반환
 
         Returns:
-            list: 의존성 패키지 목록 (open_langgraph.json의 "dependencies" 필드)
+            list: 의존성 패키지 목록 (agents.json의 "dependencies" 필드)
         """
         if self.config is None:
             return []

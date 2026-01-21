@@ -1,6 +1,6 @@
-"""Open LangGraph 메인 FastAPI 애플리케이션 엔트리포인트
+"""Agent Middleware 메인 FastAPI 애플리케이션 엔트리포인트
 
-이 모듈은 Open LangGraph Agent Protocol 서버의 핵심 FastAPI 애플리케이션을 정의합니다.
+이 모듈은 Agent Middleware Protocol 서버의 핵심 FastAPI 애플리케이션을 정의합니다.
 LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준을 준수합니다.
 
 애플리케이션 아키텍처:
@@ -39,7 +39,7 @@ LangGraph 기반 에이전트를 HTTP API로 노출하며, Agent Protocol 표준
     PORT=8000 uvicorn src.agent_server.main:app
 
 참고:
-    - LangGraph 그래프는 open_langgraph.json에서 정의
+    - LangGraph 그래프는 agents.json에서 정의
     - 인증 설정은 auth.py 및 환경변수(AUTH_TYPE)로 제어
     - 데이터베이스 마이그레이션은 scripts/migrate.py로 관리
 """
@@ -57,13 +57,13 @@ from dotenv import load_dotenv
 # 데이터베이스 URL, 인증 설정 등 애플리케이션 설정을 불러옴
 load_dotenv()
 
-# graphs/ 디렉토리를 Python 경로에 추가하여 그래프 모듈 임포트 가능하게 설정
-# 주의: 이 작업은 graphs/ 경로를 사용하는 모듈을 임포트하기 전에 반드시 수행되어야 함
-# open_langgraph.json에 정의된 그래프들이 동적으로 임포트되려면 sys.path에 등록 필요
-current_dir = Path(__file__).parent.parent.parent  # open-langgraph 루트 디렉토리로 이동
-graphs_dir = current_dir / "graphs"
-if str(graphs_dir) not in sys.path:
-    sys.path.insert(0, str(graphs_dir))
+# agents/ 디렉토리를 Python 경로에 추가하여 에이전트 모듈 임포트 가능하게 설정
+# 주의: 이 작업은 agents/ 경로를 사용하는 모듈을 임포트하기 전에 반드시 수행되어야 함
+# agents.json에 정의된 에이전트들이 동적으로 임포트되려면 sys.path에 등록 필요
+current_dir = Path(__file__).parent.parent
+agents_dir = current_dir / "agents"
+if str(agents_dir) not in sys.path:
+    sys.path.insert(0, str(agents_dir))
 
 # ruff: noqa: E402 - 아래 임포트들은 위의 sys.path 수정 이후에 실행되어야 함
 import logging
@@ -77,6 +77,8 @@ from .a2a.router import router as a2a_router
 from .api.agent_auth import router as agent_auth_router
 from .api.agents import router as agents_router
 from .api.assistants import router as assistants_router
+from .api.external_sources import router as external_sources_router
+from .api.model_health import router as model_health_router
 from .api.audit import router as audit_router
 from .api.crons import router as crons_router
 from .api.feature_flags import router as feature_flags_router
@@ -127,7 +129,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: C901
        - 없으면 캐싱 비활성화 (graceful degradation)
 
     3. LangGraph 서비스 초기화
-       - open_langgraph.json에서 그래프 정의 로드
+       - agents.json에서 그래프 정의 로드
        - 각 그래프에 대한 기본 어시스턴트 생성 (UUID5 기반)
        - 그래프 캐싱 시스템 준비
 
@@ -179,7 +181,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: C901
     await rate_limiter.initialize()
 
     # LangGraph 서비스 초기화
-    # open_langgraph.json에서 그래프 정의 로드 및 기본 어시스턴트 생성
+    # agents.json에서 그래프 정의 로드 및 기본 어시스턴트 생성
     from .services.langgraph_service import get_langgraph_service
 
     langgraph_service = get_langgraph_service()
@@ -349,7 +351,7 @@ app.add_middleware(AuditMiddleware)
 app.include_router(health_router, prefix="", tags=["Health"])
 
 # /assistants - 어시스턴트(그래프) 목록 조회 및 생성
-# open_langgraph.json에 정의된 그래프들이 어시스턴트로 노출됨
+# agents.json에 정의된 그래프들이 어시스턴트로 노출됨
 app.include_router(assistants_router, prefix="", tags=["Assistants"])
 
 # /agents - Agent Protocol v0.2.0 호환 에이전트 엔드포인트
@@ -412,6 +414,14 @@ app.include_router(audit_router, prefix="", tags=["Audit"])
 # /a2a - A2A (Agent-to-Agent) Protocol endpoints
 # 외부 A2A 클라이언트와의 에이전트 간 통신 지원
 app.include_router(a2a_router)
+
+# /external-sources - 외부 에이전트 소스 관리
+# 서버 재시작 없이 외부 에이전트를 런타임에 리로드
+app.include_router(external_sources_router, prefix="/external-sources", tags=["External Sources"])
+
+# /model - 모델 연결 상태 확인
+# LLM 모델 서버 접속 가능 여부 확인
+app.include_router(model_health_router, prefix="/model", tags=["Model Health"])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

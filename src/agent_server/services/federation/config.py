@@ -33,7 +33,7 @@ class FederationConfig(BaseModel):
 
 
 def parse_federation_config(raw_config: dict[str, Any] | None) -> FederationConfig:
-    """Parse federation configuration from open_langgraph.json."""
+    """Parse federation configuration from agents.json."""
     if not raw_config:
         return FederationConfig()
 

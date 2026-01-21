@@ -283,7 +283,7 @@ class AssistantService(TracedService):
         중복 검사를 수행하며, if_exists 정책에 따라 동작합니다.
 
         동작 흐름:
-        1. open_langgraph.json에 그래프 존재 여부 확인
+        1. agents.json에 그래프 존재 여부 확인
         2. 그래프 로딩 가능 여부 검증
         3. config와 context 동기화 (LangGraph 0.6.0+ context 권장)
         4. 중복 어시스턴트 검사 (user_id, graph_id, config 조합)
@@ -312,7 +312,7 @@ class AssistantService(TracedService):
         if graph_id not in available_graphs:
             raise HTTPException(
                 400,
-                f"Graph '{graph_id}' not found in open_langgraph.json. Available: {list(available_graphs.keys())}",
+                f"Graph '{graph_id}' not found in agents.json. Available: {list(available_graphs.keys())}",
             )
 
         # 그래프를 실제로 로드할 수 있는지 검증
@@ -541,7 +541,7 @@ class AssistantService(TracedService):
         """ID로 특정 어시스턴트 조회
 
         사용자가 소유하거나, 조직에서 공유되거나, 시스템이 제공하는 어시스턴트를 조회합니다.
-        시스템 어시스턴트는 open_langgraph.json에 정의된 그래프의 기본 어시스턴트입니다.
+        시스템 어시스턴트는 agents.json에 정의된 그래프의 기본 어시스턴트입니다.
 
         Args:
             assistant_id (str): 어시스턴트 고유 식별자

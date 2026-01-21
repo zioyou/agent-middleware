@@ -535,7 +535,7 @@ stream_mode: str | list[str] | None = None
 ```python
 assistant_id: str = Field(
     ...,
-    description="실행할 어시스턴트(그래프) ID. open_langgraph.json에 정의된 graph_id 사용"
+    description="실행할 어시스턴트(그래프) ID. agents.json에 정의된 graph_id 사용"
 )
 ```
 

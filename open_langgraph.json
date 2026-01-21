@@ -1,8 +1,0 @@
-{
-  "graphs": {
-    "agent": "./graphs/react_agent/graph.py:graph",
-    "agent_hitl": "./graphs/react_agent_hitl/graph.py:graph",
-    "subgraph_agent": "./graphs/subgraph_agent/graph.py:graph",
-    "research_summary": "./graphs/research_summary_agent/graph.py:graph"
-  }
-}

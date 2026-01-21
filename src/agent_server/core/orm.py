@@ -682,7 +682,7 @@ class Assistant(Base):
 
     주요 필드:
     - assistant_id: 고유 식별자 (UUID, DB에서 자동 생성)
-    - graph_id: 실행할 LangGraph 그래프 ID (open_langgraph.json에 정의)
+    - graph_id: 실행할 LangGraph 그래프 ID (agents.json에 정의)
     - name: 사용자가 지정한 어시스턴트 이름
     - config: LangGraph 실행 설정 (JSONB)
     - context: 그래프 런타임 컨텍스트 (JSONB)

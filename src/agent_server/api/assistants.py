@@ -61,7 +61,7 @@ async def create_assistant(
 ) -> Assistant:
     """새로운 어시스턴트 생성
 
-    open_langgraph.json에 정의된 그래프 ID를 기반으로 어시스턴트를 생성합니다.
+    agents.json에 정의된 그래프 ID를 기반으로 어시스턴트를 생성합니다.
     중복 검사를 수행하며, if_exists 정책에 따라 동작합니다.
 
     동작 흐름:
@@ -73,7 +73,7 @@ async def create_assistant(
 
     Args:
         request (AssistantCreate): 어시스턴트 생성 요청 데이터
-            - graph_id: open_langgraph.json에 정의된 그래프 ID (필수)
+            - graph_id: agents.json에 정의된 그래프 ID (필수)
             - name: 어시스턴트 이름 (선택, 기본값: "Assistant for {graph_id}")
             - config: LangGraph 설정 (선택, 기본값: {})
             - context: 런타임 컨텍스트 (선택, LangGraph 0.6.0+에서 configurable 대체)
@@ -185,7 +185,7 @@ async def get_assistant(
     """ID로 특정 어시스턴트 조회
 
     사용자가 소유하거나 시스템이 제공하는 어시스턴트를 조회합니다.
-    시스템 어시스턴트는 open_langgraph.json에 정의된 그래프의 기본 어시스턴트입니다.
+    시스템 어시스턴트는 agents.json에 정의된 그래프의 기본 어시스턴트입니다.
 
     Args:
         assistant_id (str): 어시스턴트 고유 식별자

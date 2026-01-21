@@ -245,17 +245,53 @@ async def list_threads(
         - 향후 limit/offset 파라미터 추가 예정
     """
     stmt = select(ThreadORM).where(_build_thread_access_filter(user.identity, user.org_id))
+    # 최신순 정렬 (최근 대화가 위로 오도록)
+    stmt = stmt.order_by(ThreadORM.created_at.desc())
+    
     result = await session.scalars(stmt)
     rows = result.all()
-    user_threads = [
-        Thread.model_validate(
-            {
-                **{c.name: getattr(t, c.name) for c in t.__table__.columns},
-                "metadata": t.metadata_json,
-            }
-        )
-        for t in rows
-    ]
+    
+    # 각 스레드의 최신 상태(values) 조회
+    from ..services.langgraph_service import (
+        create_thread_config,
+        get_langgraph_service,
+    )
+    
+    langgraph_service = get_langgraph_service()
+    user_threads = []
+    
+    for t in rows:
+        thread_data = {
+            **{c.name: getattr(t, c.name) for c in t.__table__.columns},
+            "metadata": t.metadata_json,
+        }
+        
+        # graph_id가 있으면 최신 상태 조회 시도
+        metadata = t.metadata_json or {}
+        graph_id = metadata.get("graph_id")
+        
+        if graph_id:
+            try:
+                # 그래프 로드 (캐시 활용)
+                agent = await langgraph_service.get_graph(graph_id)
+                
+                # 설정 생성
+                config = create_thread_config(t.thread_id, user, {})
+                
+                # 최신 상태 조회 (비동기)
+                # 주의: 많은 스레드 조회 시 성능에 영향을 줄 수 있음
+                state = await agent.aget_state(cast("RunnableConfig", config))
+                
+                if state and state.values:
+                    thread_data["values"] = state.values
+                    
+            except Exception as e:
+                # 개별 스레드 상태 조회 실패는 무시 (목록 조회 자체는 성공해야 함)
+                # logger.debug(f"Failed to get state for thread {t.thread_id}: {e}")
+                pass
+                
+        user_threads.append(Thread.model_validate(thread_data))
+        
     return ThreadList(threads=user_threads, total=len(user_threads))
 
 
@@ -835,15 +871,49 @@ async def search_threads(
 
     result = await session.scalars(stmt)
     rows = result.all()
-    threads_models = [
-        Thread.model_validate(
-            {
-                **{c.name: getattr(t, c.name) for c in t.__table__.columns},
-                "metadata": t.metadata_json,
-            }
-        )
-        for t in rows
-    ]
+    
+    # 각 스레드의 최신 상태(values) 조회 (UI에서 제목 표시를 위해 필요)
+    from ..services.langgraph_service import (
+        create_thread_config,
+        get_langgraph_service,
+    )
+    
+    langgraph_service = get_langgraph_service()
+
+    threads_models = []
+    
+    for t in rows:
+        thread_data = {
+            **{c.name: getattr(t, c.name) for c in t.__table__.columns},
+            "metadata": t.metadata_json,
+        }
+        
+        # graph_id가 있으면 최신 상태 조회 시도
+        metadata = t.metadata_json or {}
+        graph_id = metadata.get("graph_id")
+        
+        if graph_id:
+            try:
+                # 그래프 로드 (캐시 활용)
+                # 주의: search API는 빈번하게 호출될 수 있으므로 성능에 유의해야 함
+                # 하지만 현재 UI 요구사항(제목 표시)을 위해 필수적임
+                agent = await langgraph_service.get_graph(graph_id)
+                
+                # 설정 생성
+                config = create_thread_config(t.thread_id, user, {})
+                
+                # 최신 상태 조회 (비동기)
+                # cast를 사용하여 타입 체커 만족
+                state = await agent.aget_state(cast("RunnableConfig", config))
+                
+                if state and state.values:
+                    thread_data["values"] = state.values
+                    
+            except Exception as e:
+                # 개별 스레드 상태 조회 실패는 무시
+                pass
+
+        threads_models.append(Thread.model_validate(thread_data))
 
     # 클라이언트/벤더 호환성을 위해 스레드 배열 반환
     return threads_models

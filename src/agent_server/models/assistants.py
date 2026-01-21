@@ -64,8 +64,8 @@ class AssistantCreate(BaseModel):
     # LangGraph 컴파일 컨텍스트 (그래프가 configurable한 경우 사용)
     context: dict[str, Any] | None = Field({}, description="Assistant context")
 
-    # open_langgraph.json에 정의된 그래프 ID (필수)
-    graph_id: str = Field(..., description="LangGraph graph ID from open_langgraph.json")
+    # agents.json에 정의된 그래프 ID (필수)
+    graph_id: str = Field(..., description="LangGraph graph ID from agents.json")
 
     # 검색 및 필터링을 위한 메타데이터
     metadata: dict[str, Any] | None = Field(
@@ -108,7 +108,7 @@ class Assistant(BaseModel):
     # LangGraph 컴파일 컨텍스트 (configurable 그래프용)
     context: dict[str, Any] = Field(default_factory=dict)
 
-    # open_langgraph.json에 정의된 그래프 ID
+    # agents.json에 정의된 그래프 ID
     graph_id: str
 
     # 소유자의 사용자 ID (멀티테넌시 격리)

@@ -29,7 +29,7 @@ graph = await service.get_graph("weather_agent")
 ```
 
 **주요 기능**:
-- **그래프 레지스트리 관리**: `open_langgraph.json`에서 그래프 정의 로드
+- **그래프 레지스트리 관리**: `agents.json`에서 그래프 정의 로드
 - **동적 그래프 로딩**: Python 파일에서 그래프 모듈 동적 import
 - **그래프 컴파일**: Postgres 체크포인터와 함께 자동 컴파일
 - **캐싱**: 로드된 그래프를 메모리에 캐시하여 성능 향상
@@ -1012,7 +1012,7 @@ from services.custom_endpoint_service import get_custom_endpoint_service
 service = get_custom_endpoint_service()
 await service.initialize()
 
-# 커스텀 엔드포인트는 open_langgraph.json에서 정의:
+# 커스텀 엔드포인트는 agents.json에서 정의:
 # {
 #   "custom_endpoints": {
 #     "/webhook/github": {

@@ -1,0 +1,15 @@
+{
+  "graphs": {
+    "resoning": "./agents/agent_reason/graph.py:graph",
+    "resoning_hitl": "./agents/agent_reason_hitl/graph.py:graph",
+    "sub_agent": "./agents/agent_subagent/graph.py:graph",
+    "research_summary": "./agents/agent_research_summary/graph.py:graph"
+  },
+  "external_sources": [
+    {
+      "url": "http://host.docker.internal:8003",
+      "name": "Local Test Agents",
+      "enabled": true
+    }
+  ]
+}

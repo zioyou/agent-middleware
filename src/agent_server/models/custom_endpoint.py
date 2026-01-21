@@ -1,6 +1,6 @@
 """Custom HTTP endpoint configuration models.
 
-These models define the config schema for custom endpoints in open_langgraph.json.
+These models define the config schema for custom endpoints in agents.json.
 They are used by CustomEndpointService to validate and register routes dynamically.
 """
 

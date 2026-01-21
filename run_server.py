@@ -16,11 +16,11 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 
-# Add graphs directory to Python path so imports can be resolved
+# Add agents directory to Python path so imports can be resolved
 current_dir = Path(__file__).parent
-graphs_dir = current_dir / "graphs"
-if str(graphs_dir) not in sys.path:
-    sys.path.insert(0, str(graphs_dir))
+agents_dir = current_dir / "agents"
+if str(agents_dir) not in sys.path:
+    sys.path.insert(0, str(agents_dir))
 
 
 def setup_environment() -> None:

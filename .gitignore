@@ -39,3 +39,7 @@ docs/plans/
 .mcp.json
 .serena/
 .specify/
+
+# Generated files (ignore these)
+coverage.json
+langgraph.db

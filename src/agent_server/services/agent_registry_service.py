@@ -29,7 +29,7 @@ Council 권고에 따라 ORM 없이 in-memory registry로 시작합니다.
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from a2a.types import AgentCard
 
@@ -48,6 +48,8 @@ class RegisteredAgent:
         registered_at: 등록 시간
         is_healthy: 헬스 체크 상태
         tags: 검색용 태그 (skills에서 추출 + 추가 태그)
+        source_type: 에이전트 소스 유형 (internal: 내부, external: 외부)
+        source_url: 외부 소스 URL (external인 경우)
     """
 
     graph_id: str
@@ -55,6 +57,8 @@ class RegisteredAgent:
     registered_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     is_healthy: bool = True
     tags: list[str] = field(default_factory=list)
+    source_type: Literal["internal", "external"] = "internal"
+    source_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """딕셔너리로 변환 (API 응답용)"""
@@ -64,6 +68,8 @@ class RegisteredAgent:
             "registered_at": self.registered_at.isoformat(),
             "is_healthy": self.is_healthy,
             "tags": self.tags,
+            "source_type": self.source_type,
+            "source_url": self.source_url,
         }
 
 
@@ -117,6 +123,8 @@ class AgentRegistryService:
         agent_card: AgentCard,
         *,
         additional_tags: list[str] | None = None,
+        source_type: Literal["internal", "external"] = "internal",
+        source_url: str | None = None,
     ) -> RegisteredAgent:
         """에이전트 등록 (멱등성 보장)
 
@@ -126,6 +134,8 @@ class AgentRegistryService:
             graph_id: LangGraph 그래프 ID
             agent_card: A2A SDK AgentCard 인스턴스
             additional_tags: 추가 검색 태그
+            source_type: 소스 유형 (internal/external)
+            source_url: 외부 소스 URL (external인 경우)
 
         Returns:
             RegisteredAgent: 등록된 에이전트 정보
@@ -142,14 +152,17 @@ class AgentRegistryService:
             graph_id=graph_id,
             agent_card=agent_card,
             tags=tags,
+            source_type=source_type,
+            source_url=source_url,
         )
 
         self._registry[graph_id] = registered
         logger.info(
-            "Registered A2A agent: %s (skills: %d, tags: %d)",
+            "Registered A2A agent: %s (skills: %d, tags: %d, source: %s)",
             graph_id,
             len(agent_card.skills),
             len(tags),
+            source_type,
         )
 
         return registered

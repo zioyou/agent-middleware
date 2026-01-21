@@ -90,6 +90,9 @@ class Thread(BaseModel):
     ttl_seconds: int | None = Field(None, description="TTL 기간 (초)")
     ttl_strategy: str | None = Field(None, description="만료 전략 (delete/archive)")
     expires_at: datetime | None = Field(None, description="만료 예정 시간")
+    
+    # UI 편의성을 위한 최신 상태 값 (선택적)
+    values: dict[str, Any] | None = Field(None, description="스레드의 최신 상태 값 (UI 표시용)")
 
     model_config = ConfigDict(from_attributes=True)  # ORM 모델에서 자동 변환 허용
 

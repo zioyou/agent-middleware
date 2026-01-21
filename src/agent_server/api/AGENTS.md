@@ -243,7 +243,7 @@ async def create_assistant(self, request: AssistantCreate, user_id: str):
 
 # 3. 코어 레이어 (langgraph_service.py)
 async def get_graph(self, graph_id: str):
-    # open_langgraph.json에서 그래프 로드 및 캐싱
+    # agents.json에서 그래프 로드 및 캐싱
     if graph_id in self.graph_cache:
         return self.graph_cache[graph_id]
 

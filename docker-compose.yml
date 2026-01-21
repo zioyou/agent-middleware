@@ -22,7 +22,9 @@ services:
     image: agent-middleware:latest
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile
+      dockerfile: ./Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     environment:
@@ -38,8 +40,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./open_langgraph.json:/app/open_langgraph.json:ro
-      # - ./graphs:/app/graphs:ro  # 주석 처리: 이미지에 빌드된 코드 사용
+      - ./agents.json:/app/agents.json:ro
+      - ./agents:/app/agents:ro # 활성화: 코드 변경사항 즉시 반영
       - ./src:/app/src:ro # for hot reload support of server
       - ./auth.py:/app/auth.py:ro
       - ./.env:/app/.env:ro
@@ -56,7 +58,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6381:6379"
     volumes:
       - redis_data:/data
     healthcheck:
