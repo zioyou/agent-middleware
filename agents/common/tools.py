@@ -54,7 +54,13 @@ async def tavily_search(query: str) -> dict[str, Any]:
         client = TavilyClient(api_key=api_key)
         
         # Tavily 검색 수행 (search_depth="advanced"로 심층 검색)
-        response = client.search(query, search_depth="advanced", max_results=5)
+        # Token optimization: Limit results to 3
+        response = client.search(
+            query, 
+            search_depth="advanced", 
+            max_results=3,
+            include_raw_content=False
+        )
         
         formatted_results = []
         for result in response.get("results", []):
@@ -297,6 +303,7 @@ async def deep_research(query: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 목록 (기본 제공)
 # ---------------------------------------------------------------------------
+from ..agent_todo.todo_tools import update_todo
 
 COMMON_TOOLS: list[Callable[..., Any]] = [
     tavily_search,
