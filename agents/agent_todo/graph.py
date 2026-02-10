@@ -8,7 +8,7 @@ Architecture:
 """
 
 from typing import Any, Sequence, Union, Literal, Dict
-from dataclasses import asdict
+from datetime import datetime, timedelta
 
 from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
@@ -107,13 +107,55 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
         return_update["files"] = {k: None for k in existing_files.keys()}
     
     # 1. System Prompt
-    system_msg = SystemMessage(content=PLANNER_PROMPT)
+    # Force KST (UTC+9) for accurate date planning
+    kst_now = datetime.now() + timedelta(hours=9)
+    current_date = kst_now.strftime("%Y-%m-%d %A")
+    system_msg = SystemMessage(content=f"{PLANNER_PROMPT}\n\nToday's Date: {current_date}")
     
     # 2. Invoke Model with FORCED write_todos
     # Force planning if it's the first step
     # API requires 'none', 'auto', or 'required'. Since we only have one tool, 'required' forces it.
+    
+    print(f"[DEBUG] Planner Start. Tools: {[t.name for t in PLANNER_TOOLS]}")
+    
     model_bound = model_instance.bind_tools(PLANNER_TOOLS, tool_choice="required")
     response = await model_bound.ainvoke([system_msg] + messages, config)
+    
+    # --- PROACTIVE GUARDRAIL ---
+    # If the model ignores the prompt and tries to call a Worker tool (e.g., google_calendar_create),
+    # we intercept it and convert it into a 'write_todos' plan.
+    if response.tool_calls:
+        original_tool_calls = response.tool_calls
+        safe_tool_calls = []
+        
+        for tc in original_tool_calls:
+            if tc["name"] == "write_todos":
+                safe_tool_calls.append(tc)
+            else:
+                # Intercept!
+                print(f"[GUARDRAIL] Intercepted direct execution attempt: {tc['name']}")
+                
+                # Create a task content description from the tool call
+                args_str = ", ".join([f"{k}='{v}'" for k, v in tc["args"].items()])
+                task_content = f"Execute tool '{tc['name']}' with args: {args_str}"
+                
+                # Construct a fake write_todos call
+                fake_call = {
+                    "name": "write_todos",
+                    "args": {
+                        "todos": [
+                            {"content": task_content, "status": "in_progress"}
+                        ]
+                    },
+                    "id": tc["id"], # Preserve ID or generate new? Preserve seems safer for tracking
+                    "type": "tool_call"
+                }
+                safe_tool_calls.append(fake_call)
+        
+        # Replace tool calls in the response
+        response.tool_calls = safe_tool_calls
+
+    print(f"[DEBUG] Planner Response Tool Calls: {response.tool_calls}")
     
     return_update["messages"] = [response]
     
@@ -178,6 +220,10 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
         task_description=current_task["content"],
         previous_results=previous_results_str
     )
+    
+    kst_now = datetime.now() + timedelta(hours=9)
+    current_date = kst_now.strftime("%Y-%m-%d %A %H:%M:%S")
+    system_content = f"### [SYSTEM TIME]\nCurrent Time (KST): {current_date}\n\n" + system_content
     system_msg = SystemMessage(content=system_content)
     
     # 3. Construct Input Messages
@@ -270,8 +316,11 @@ def route_planner_output(state: State) -> str:
     if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
         return "planner_tools"
     
-    # If no tool call (simple chat) -> END
-    return END
+    # If no tool call, FORCE RETRY (Strict Mode)
+    # This prevents the "Simple Chat" behavior.
+    # We route back to planner to try again. 
+    # (In a real production system, you might want to inject a reminder message here)
+    return "planner"
 
 def route_dispatcher(state: State) -> str:
     """
@@ -339,7 +388,7 @@ builder.add_conditional_edges(
     route_planner_output,
     {
         "planner_tools": "planner_tools",
-        END: END
+        "planner": "planner"
     }
 )
 builder.add_edge("planner_tools", "dispatcher")
@@ -379,7 +428,7 @@ graph = builder.compile()
 # Metadata for UI
 graph._a2a_metadata = {
     "name": "계획 실행 에이전트 (Todo)",
-    "description": "복잡한 작업을 단계별 계획으로 수립하고 순차적으로 실행하여 해결하는 에이전트입니다. 여행 일정 계획, 다단계 조사 등 체계적인 접근이 필요한 작업에 적합합니다.",
+    "description": "사용자의 요청에 대해 무조건적으로 계획을 수립하고 실행합니다. (Strict Planning Mode)",
     "capabilities": {
         "streaming": True,
         "state_transition_history": True

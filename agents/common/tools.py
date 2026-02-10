@@ -13,7 +13,11 @@
 import ast
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Annotated, Optional
+from langgraph.prebuilt import InjectedState
+import smtplib
+from email.mime.text import MIMEText
+import httpx
 
 
 # Tavily 검색 (API 키 필요)
@@ -303,13 +307,321 @@ async def deep_research(query: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 목록 (기본 제공)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 커뮤니케이션 도구 (Gmail, Slack, Kakao)
+# ---------------------------------------------------------------------------
+
+
+async def slack_send_message(
+    text: str, 
+    state: Annotated[dict, InjectedState]
+) -> dict[str, Any]:
+    """Slack Incoming Webhook으로 메시지 전송
+    
+    설정된 Webhook URL을 통해 특정 채널로 메시지를 보냅니다.
+    Webhook URL은 특정 채널에 고정되어 있으므로 별도의 채널 ID가 필요하지 않습니다.
+    
+    Args:
+        text (str): 보낼 메시지 내용
+    """
+    secrets = state.get("user_secrets", {})
+    
+    # Context fallback
+    if not secrets or not secrets.get("slack_webhook_url"):
+        context = state.get("context", {})
+        if context:
+            secrets = context.get("user_secrets", {}) or secrets
+            
+    # 1. Check Environment Variable (Preferred for Public Bot)
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    
+    # 2. Fallback to User Secrets (Legacy / Personal override)
+    if not webhook_url:
+        webhook_url = secrets.get("slack_webhook_url")
+    
+    if not webhook_url:
+        return {
+            "error": "Slack Webhook URL not found. Please configure it in .env (SLACK_WEBHOOK_URL) or Settings."
+        }
+        
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                json={"text": text}
+            )
+            if response.status_code == 200:
+                return {"result": "Message sent to Slack via Webhook"}
+            else:
+                return {"error": f"Slack Webhook Error: {response.text}"}
+    except Exception as e:
+        return {"error": f"Failed to send Slack message: {str(e)}"}
+
+
+async def gmail_send_email(
+    subject: str, 
+    body: str, 
+    state: Annotated[dict, InjectedState],
+    to_email: Optional[str] = None
+) -> dict[str, Any]:
+    """Gmail을 통해 이메일 전송
+    
+    Args:
+        subject (str): 이메일 제목
+        body (str): 이메일 본문
+        to_email (str, optional): 수신자 이메일 주소. 사용자가 "나에게" 또는 "내 메일로"라고 할 경우, 이 필드를 절대 입력하지 말고 None으로 유지하십시오. 임의의 이메일 주소를 추측하여 입력하지 마십시오.
+    """
+    secrets = state.get("user_secrets", {})
+    
+    # Context fallback
+    if not secrets or not secrets.get("google_refresh_token"):
+        context = state.get("context", {})
+        if context:
+            secrets = context.get("user_secrets", {}) or secrets
+
+    # Retrieve Google OAuth Credentials
+    client_id = secrets.get("google_client_id")
+    client_secret = secrets.get("google_client_secret")
+    refresh_token = secrets.get("google_refresh_token")
+    
+    if not client_id or not client_secret or not refresh_token:
+        return {
+            "error": "Google credentials (OAuth) not found. Please connect your Google Account in Settings."
+        }
+        
+    try:
+        # 1. Refresh Token
+        token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
+        access_token = token_data.get("access_token")
+        
+        # 2. Determine Sender Email 
+        # If to_email is missing (None), we MUST find the user's real email address.
+        # Gmail API might reject "me" in the 'To' header.
+        target_email = to_email
+        if not target_email:
+             # Fetch user profile to get the real email address
+             target_email = await GoogleUtils.get_user_email(access_token)
+        
+        # 3. Send Email via API
+        # Note: If target_email is "me", Gmail API sends to the authenticated user.
+        result = await GoogleUtils.send_email(access_token, target_email, subject, body)
+        
+        return {"result": f"Email sent successfully to {target_email}"}
+    except Exception as e:
+        return {"error": f"Failed to send email: {str(e)}"}
+
+
+from .kakao_utils import KakaoUtils
+
+async def kakao_send_message(
+    text: str,
+    state: Annotated[dict, InjectedState],
+    target_name: str = None
+) -> dict[str, Any]:
+    """카카오톡 메시지 전송 (나에게 또는 친구에게)
+    
+    Args:
+        text (str): 보낼 메시지 내용
+        target_name (str, optional): 친구 이름 (닉네임). 생략 시 '나에게' 전송됩니다. (참고: 친구는 앱에 등록된 팀원이어야 하며 권한 동의가 필요합니다)
+    """
+    secrets = state.get("user_secrets", {})
+    
+    # Context fallback
+    if not secrets or not secrets.get("kakao_access_token"):
+        context = state.get("context", {})
+        if context:
+            secrets = context.get("user_secrets", {}) or secrets
+
+    # Retrieve credentials
+    access_token = secrets.get("kakao_access_token")
+    refresh_token = secrets.get("kakao_refresh_token")
+    client_id = secrets.get("kakao_client_id")
+    
+    if not access_token:
+        # Fallback to legacy key
+        access_token = secrets.get("kakao_api_key")
+    
+    if not access_token:
+        return {
+            "error": "Kakao Access Token not found. Please configure it in Settings."
+        }
+        
+    async def _execute_send(token: str):
+        if target_name:
+            # 1. Get Friends List
+            friends_data = await KakaoUtils.get_friends(token)
+            elements = friends_data.get("elements", [])
+            
+            # 2. Find friend
+            target = next((f for f in elements if target_name in f.get("profile_nickname", "")), None)
+            
+            if not target:
+                names = [f.get("profile_nickname") for f in elements]
+                return {
+                    "error": f"Friend '{target_name}' not found. Available friends: {names}. (Ensure they are Team Members and have agreed to 'Friends List' scope)"
+                }
+            
+            # 3. Send to Friend
+            return await KakaoUtils.send_to_friends(token, [target.get("uuid")], text)
+        else:
+            # Send to Me
+            return await KakaoUtils.send_to_me(token, text)
+
+    try:
+        # 1. Try sending
+        try:
+            result = await _execute_send(access_token)
+        except Exception as api_error:
+            # Catch API errors like 401 raised from utils
+            if "401" in str(api_error):
+                result = {"status": 401}
+            else:
+                raise api_error
+        
+        # 2. If 401 Unauthorized, try refreshing
+        if result.get("status") == 401:
+            if not refresh_token or not client_id:
+                return {"error": "Access Token expired (401) and no Refresh Token/Client ID provided."}
+                
+            # Attempt Refresh
+            token_data = await KakaoUtils.refresh_access_token(client_id, refresh_token)
+            new_access_token = token_data.get("access_token")
+            
+            if new_access_token:
+                # Retry
+                retry_result = await _execute_send(new_access_token)
+                if retry_result.get("status") == 200:
+                    return {
+                        "result": f"Message sent to {'friend ' + target_name if target_name else 'me'} successfully (Token Refreshed)."
+                    }
+                else:
+                     return {"error": f"Retry failed after refresh: {retry_result.get('body')}"}
+                     
+        if result.get("status") == 200:
+             return {"result": f"Message sent to {'friend ' + target_name if target_name else 'me'} successfully"}
+        else:
+            return {"error": f"Kakao API Error: {result.get('body')}"}
+            
+    except Exception as e:
+        return {"error": f"Failed to send Kakao message: {str(e)}"}
+
+
+from .google_utils import GoogleUtils
+from .date_utils import DateUtils
+
+async def resolve_date_expression(
+    expression: str
+) -> dict[str, Any]:
+    """자연어 날짜 표현(예: '이번주 금요일', '내일')을 정확한 날짜(YYYY-MM-DD)로 변환합니다.
+    
+    Args:
+        expression (str): 날짜 표현 (예: "다음주 월요일", "모레", "이번주 금요일", "tomorrow", "next friday"). 시간 표현(예: "오후 3시")은 제외하고 날짜만 입력하십시오.
+    """
+    try:
+        iso_date = DateUtils.parse_relative_date(expression)
+        if iso_date:
+            return {"date": iso_date, "parsed_expression": expression}
+        else:
+            return {"error": f"Could not parse date expression: {expression}"}
+    except Exception as e:
+        return {"error": f"Date parsing failed: {str(e)}"}
+
+async def google_calendar_list(
+    state: Annotated[dict, InjectedState],
+    max_results: int = 10
+) -> dict[str, Any]:
+    """구글 캘린더에서 다가오는 일정을 조회합니다.
+    
+    Args:
+        max_results (int, optional): 조회할 최대 일정 개수 (기본값: 10)
+    """
+    secrets = state.get("user_secrets", {})
+    context = state.get("context", {})
+    if not secrets and context:
+        secrets = context.get("user_secrets", {})
+        
+    client_id = secrets.get("google_client_id")
+    client_secret = secrets.get("google_client_secret")
+    refresh_token = secrets.get("google_refresh_token")
+    
+    if not client_id or not client_secret or not refresh_token:
+        return {"error": "Google Calendar credentials not found. Please configure them in Settings."}
+        
+    try:
+        # 1. Refresh Token to get Access Token
+        token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
+        access_token = token_data.get("access_token")
+        
+        # 2. List Events
+        events = await GoogleUtils.list_events(access_token, max_results)
+        return events
+    except Exception as e:
+        return {"error": f"Failed to list calendar events: {str(e)}"}
+
+async def google_calendar_create(
+    summary: str,
+    start_time: str,
+    end_time: str,
+    state: Annotated[dict, InjectedState],
+    description: str = ""
+) -> dict[str, Any]:
+    """구글 캘린더에 새로운 일정을 등록합니다.
+    
+    Args:
+        summary (str): 일정 제목
+        start_time (str): 시작 시간 (ISO 8601 형식). 오전/오후 명시가 없으면 기본적으로 '오전'으로 간주합니다.
+        end_time (str): 종료 시간 (ISO 8601 형식)
+        description (str, optional): 일정 설명
+
+    (참고: "10시"라고만 하면 "오전 10시"로 해석해야 합니다. 오후 10시는 "22시" 또는 "오후 10시"로 명시되어야 합니다.)
+    """
+    secrets = state.get("user_secrets", {})
+    context = state.get("context", {})
+    if not secrets and context:
+        secrets = context.get("user_secrets", {})
+        
+    client_id = secrets.get("google_client_id")
+    client_secret = secrets.get("google_client_secret")
+    refresh_token = secrets.get("google_refresh_token")
+    
+    if not client_id or not client_secret or not refresh_token:
+        return {"error": "Google Calendar credentials not found. Please configure them in Settings."}
+        
+    try:
+        # 1. Refresh Token
+        token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
+        access_token = token_data.get("access_token")
+        
+        # 2. Create Event
+        result = await GoogleUtils.create_event(access_token, summary, start_time, end_time, description)
+        return result
+    except Exception as e:
+        return {"error": f"Failed to create calendar event: {str(e)}"}
+
+
+# ---------------------------------------------------------------------------
+# 도구 목록 정의
+# ---------------------------------------------------------------------------
+
 from ..agent_todo.todo_tools import update_todo
+import json  # Added for kakao template
+
+from .analysis_tools import analyze_document
+from .visualization_tools import generate_graph
 
 COMMON_TOOLS: list[Callable[..., Any]] = [
     tavily_search,
     scrape_web_page,
     calculator,
-    deep_research
+    deep_research,
+    slack_send_message,
+    gmail_send_email,
+    kakao_send_message,
+    google_calendar_list,
+    google_calendar_create,
+    resolve_date_expression,
+    analyze_document,
+    generate_graph
 ]
 
 # 각 에이전트는 필요한 도구만 선택해서 사용 가능

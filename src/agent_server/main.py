@@ -76,6 +76,7 @@ from starlette.middleware.authentication import AuthenticationMiddleware
 from .a2a.router import router as a2a_router
 from .api.agent_auth import router as agent_auth_router
 from .api.agents import router as agents_router
+from .api.google_auth import router as google_auth_router # Import new router (Fixed path)
 from .api.assistants import router as assistants_router
 from .api.external_sources import router as external_sources_router
 from .api.model_health import router as model_health_router
@@ -422,6 +423,9 @@ app.include_router(external_sources_router, prefix="/external-sources", tags=["E
 # /model - 모델 연결 상태 확인
 # LLM 모델 서버 접속 가능 여부 확인
 app.include_router(model_health_router, prefix="/model", tags=["Model Health"])
+
+# /auth/google - Google OAuth
+app.include_router(google_auth_router, tags=["Google Auth"])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

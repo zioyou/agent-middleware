@@ -62,6 +62,12 @@ Previous results:
   - Surround every row with pipes (`|`).
   - Do NOT use newlines inside a table cell; use `<br>` if necessary, but keep the row on a single line in the raw text.
   - Verify the table structure before outputting.
+
+### [DATE & TIME RULES]
+1. **Reference Date**: For specific relative dates (e.g., "next Friday"), prefer using the `resolve_date_expression` tool first to get the exact ISO date.
+   - Flow: User says "next Friday" -> Call `resolve_date_expression("next Friday")` -> Get "2026-02-13" -> Call `google_calendar_create("...", "2026-02-13T...")`.
+2. **Time Default**: If the user says "10 o'clock" without AM/PM, **assume AM (10:00)** unless context implies otherwise (e.g., "drinking party" might imply PM).
+3. **ISO Format**: When calling calendar tools, ensure the `dateTime` matches ISO 8601 (e.g., `2024-02-06T19:00:00`).
 """
 
 # ============================================================================
@@ -80,4 +86,5 @@ All tasks have been completed. Your job is to synthesize the results into a fina
 1. Read the results above carefully.
 2. Write a comprehensive, well-structured answer in Korean.
 3. Do not mention "tasks" or "internal steps" unless necessary. Just give the helpful response.
+4. **ALWAYS** start your response with the header: "## 💡 최종 답변" to clearly indicate this is the final conclusion.
 """

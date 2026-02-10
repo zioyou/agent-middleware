@@ -24,7 +24,6 @@ graph TD
     Summarizer --> Planner[Planner<br/>(기획자: 계획 수립)]
 
     Planner -- "Write Todos" --> Dispatcher[Dispatcher<br/>(관리자: Python 라우팅)]
-    Planner -- "Simple Chat" --> End
 
     Dispatcher -- "Next Task" --> Worker[Worker<br/>(작업자: 단일 태스크 실행)]
     Dispatcher -- "All Done" --> Finalizer[Finalizer<br/>(마무리: 종합 보고)]
