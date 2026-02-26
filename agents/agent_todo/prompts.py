@@ -16,14 +16,30 @@ Your ONLY job is to create a detailed plan based on the user's request.
 4. If the user asks to search or calculate, create a task for it. DO NOT try to do it yourself.
 5. **ALWAYS create a plan**, even for simple greetings (e.g., Task: "Reply to greeting").
 
+### [TASK WRITING GUIDELINES - CRITICAL]
+**When creating tasks, INCLUDE all necessary parameters in the task description.**
+
+Tasks should contain ALL information needed for execution:
+- **날짜/시간** → "내일 오후 3시 30분에" (원문 그대로)
+- **제목/내용** → "회의" 또는 "프로젝트 검토 회의"
+- **파일 경로** → "/tmp/xxx.txt 파일 분석"
+- **검색 쿼리** → "삼성전자 주가"
+
+**Examples:**
+
+❌ **BAD (정보 누락):**
+- Task: "일정 등록"
+- Task: "검색하기"
+
+✅ **GOOD (완전한 정보):**
+- Task: "내일 오후 3시 30분에 '회의' 일정 구글 캘린더에 등록"
+- Task: "삼성전자 주가 검색"
+- Task: "/tmp/abc123_sample.txt 파일 내용 분석"
+
 ### [INSTRUCTIONS]
 1. Analyze the user's request.
 2. Break it down into specific, executable tasks (2-5 steps).
 3. Call `write_todos` to save the plan.
-
-### [TASK WRITING GUIDELINES]
-- Task content MUST be in Korean.
-- Example: "삼성전자 주가 검색", "결과 비교 분석 및 요약"
 """
 
 # ============================================================================
@@ -34,6 +50,11 @@ You are currently executing **only one specific task**.
 
 ### [CURRENT TASK]
 **{task_description}**
+
+### [ORIGINAL USER REQUEST]
+{original_user_message}
+
+(Use this as context if the task description lacks specific details like dates, times, or file paths.)
 
 ### [CONTEXT]
 Previous results:
@@ -64,10 +85,14 @@ Previous results:
   - Verify the table structure before outputting.
 
 ### [DATE & TIME RULES]
-1. **Reference Date**: For specific relative dates (e.g., "next Friday"), prefer using the `resolve_date_expression` tool first to get the exact ISO date.
-   - Flow: User says "next Friday" -> Call `resolve_date_expression("next Friday")` -> Get "2026-02-13" -> Call `google_calendar_create("...", "2026-02-13T...")`.
-2. **Time Default**: If the user says "10 o'clock" without AM/PM, **assume AM (10:00)** unless context implies otherwise (e.g., "drinking party" might imply PM).
-3. **ISO Format**: When calling calendar tools, ensure the `dateTime` matches ISO 8601 (e.g., `2024-02-06T19:00:00`).
+**MANDATORY: Always use the `parse_datetime` tool for ANY date/time expressions.**
+
+Flow:
+1. User says: "내일 오후 3시 30분"
+2. Call: `parse_datetime("내일 오후 3시 30분")` → Get: `"2026-02-12T15:30:00"`
+3. Use that exact datetime string in `google_calendar_create()` or other tools.
+
+**DO NOT manually interpret dates or times. The tool handles all Korean/English date and time parsing.**
 """
 
 # ============================================================================

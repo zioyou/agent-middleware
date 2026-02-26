@@ -72,11 +72,11 @@ def _read_hwp(file_path: str) -> str:
 
 async def analyze_document(file_path: str, query: str = "") -> Dict[str, Any]:
     """
-    Reads a file and returns its content or a summary/preview if it's large.
+    문서 파일(PDF, Excel, CSV, Word, HWP 등)을 읽고 내용을 분석하거나 요약합니다.
     
     Args:
-        file_path (str): Absolute path to the file.
-        query (str): Optional query to guide the analysis.
+        file_path (str): 분석할 파일의 절대 경로.
+        query (str): 분석 시 중점을 둘 질문이나 키워드 (선택 사항).
     """
     if not os.path.exists(file_path):
         return {"error": f"File not found: {file_path}"}

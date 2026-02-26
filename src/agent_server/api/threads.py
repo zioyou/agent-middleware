@@ -1033,9 +1033,21 @@ async def update_thread(
 
     # 2. 메타데이터 병합 (기존 메타데이터에 새 값 추가/덮어쓰기)
     if request.metadata is not None:
-        existing_metadata = thread.metadata_json or {}
+        from sqlalchemy.orm.attributes import flag_modified
+
+        logger.info(f"Updating thread {thread_id} metadata. Request: {request.metadata}")
+        
+        # 기존 dict를 복사하여 새 객체 생성 (SQLAlchemy 변경 감지 유도)
+        existing_metadata = dict(thread.metadata_json or {})
         existing_metadata.update(request.metadata)
+        
+        # 재할당
         thread.metadata_json = existing_metadata
+        
+        # 명시적으로 변경 플래그 설정
+        flag_modified(thread, "metadata_json")
+        
+        logger.info(f"New metadata: {thread.metadata_json}")
 
     # 3. TTL 처리
     if request.ttl is not None:

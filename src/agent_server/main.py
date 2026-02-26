@@ -91,6 +91,7 @@ from .api.runs import router as runs_router
 from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
 from .api.threads import router as threads_router
+from .api.webhooks.slack import router as slack_webhook_router
 from .core.auth_middleware import get_auth_backend, on_auth_error
 from .core.cache import cache_manager
 from .core.database import db_manager
@@ -324,6 +325,25 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],  # 명시적 헤더
 )
 
+# 1.5 Static Files Mounting (for generated images)
+from fastapi.staticfiles import StaticFiles
+
+# 1.5 Static Files Mounting (for generated images)
+from fastapi.staticfiles import StaticFiles
+
+# Ensure directory exists
+# Ensure directory exists
+if os.path.exists("/app/uploads") and os.access("/app/uploads", os.W_OK):
+    UPLOAD_DIR = "/app/uploads"
+else:
+    # Use /tmp/agent_uploads to match visualization_tools.py fallback
+    UPLOAD_DIR = "/tmp/agent_uploads"
+
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
+
 # 2. DoubleEncodedJSON 미들웨어: 프론트엔드의 이중 인코딩 처리
 # 일부 프론트엔드 클라이언트가 JSON을 두 번 인코딩하는 경우 자동 디코딩
 app.add_middleware(DoubleEncodedJSONMiddleware)
@@ -426,6 +446,9 @@ app.include_router(model_health_router, prefix="/model", tags=["Model Health"])
 
 # /auth/google - Google OAuth
 app.include_router(google_auth_router, tags=["Google Auth"])
+
+# /slack/webhook - Slack webhook
+app.include_router(slack_webhook_router, tags=["Slack Webhook"])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

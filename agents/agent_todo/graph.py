@@ -32,6 +32,7 @@ from ..common.tools import (
     COMMON_TOOLS
 )
 from ..common.model_utils import load_chat_model
+from ..common.file_saver import file_saver_node
 
 # ============================================================================
 # INITIALIZATION
@@ -42,7 +43,8 @@ default_context = Context()
 # Load Model
 try:
     model_instance = load_chat_model(default_context.model)
-except Exception:
+except Exception as e:
+    print(f"[ERROR] Failed to load original chat model ({default_context.model}): {e}")
     from langchain_openai import ChatOpenAI
     model_instance = ChatOpenAI(model="gpt-4o")
 
@@ -64,13 +66,17 @@ summary_node = SummarizationMiddleware(
     truncate_args_settings=truncate_args_settings,
 ).before_model
 
+# File Saver Node Logic
+
+
 # Todo Middleware (Just to extract write_todos tool)
 todo_middleware = TodoListMiddleware()
 WRITE_TODOS_TOOL = todo_middleware.tools[0]
 
 # Filesystem Middleware (Defaults to StateBackend for UI artifacts)
 fs_middleware = FilesystemMiddleware()
-filesystem_tools = fs_middleware.tools
+# Filter out browsing tools - agent should use analyze_document instead
+filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob", "grep", "read_file", "execute"]]
 
 # Define Tool Sets
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
@@ -211,6 +217,19 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     
     react_history.reverse()
     
+    # Extract original user message for Worker context
+    original_user_message = "(No original user message found)"
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            # Get text content from the message
+            if isinstance(m.content, str):
+                original_user_message = m.content
+            elif isinstance(m.content, list):
+                # Extract text blocks
+                text_parts = [block.get("text", "") for block in m.content if isinstance(block, dict) and block.get("type") == "text"]
+                original_user_message = " ".join(text_parts)
+            break
+    
     # 2. Construct Specialized Prompt
     previous_results_str = "\n".join([f"Task {i+1}: {res}" for i, res in results.items()])
     if not previous_results_str:
@@ -218,6 +237,7 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
         
     system_content = WORKER_PROMPT_TEMPLATE.format(
         task_description=current_task["content"],
+        original_user_message=original_user_message,  # NEW: Pass original message
         previous_results=previous_results_str
     )
     
@@ -360,6 +380,7 @@ def route_worker_output(state: State) -> str:
 builder = StateGraph(State, input=InputState)
 
 # Add Nodes
+builder.add_node("file_saver", file_saver_node)
 builder.add_node("patcher", patch_node)
 builder.add_node("summarizer", summary_node)
 builder.add_node("planner", planner_node)
@@ -371,8 +392,9 @@ builder.add_node("task_completer", task_completer_node)
 builder.add_node("finalizer", finalizer_node)
 
 # Flow
-# 1. Start -> Middleware
-builder.add_edge(START, "patcher")
+# 1. Start -> File Saver -> Middleware
+builder.add_edge(START, "file_saver")
+builder.add_edge("file_saver", "patcher")
 builder.add_edge("patcher", "summarizer")
 
 # 2. Summarizer -> Planner (New Turn starts here)

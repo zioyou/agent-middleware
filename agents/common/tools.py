@@ -12,13 +12,40 @@
 
 import ast
 import os
-from collections.abc import Callable
-from typing import Any, Annotated, Optional
-from langgraph.prebuilt import InjectedState
-import smtplib
-from email.mime.text import MIMEText
+import re
+import uuid
 import httpx
+from collections.abc import Callable
+from typing import Any, Optional, Annotated
+from langgraph.prebuilt import InjectedState
 
+# Local Utility Imports
+try:
+    from .google_utils import GoogleUtils
+except ImportError:
+    GoogleUtils = None
+
+try:
+    from .kakao_utils import KakaoUtils
+except ImportError:
+    KakaoUtils = None
+
+try:
+    from .date_utils import DateUtils
+except ImportError:
+    DateUtils = None
+
+
+
+try:
+    from .analysis_tools import analyze_document
+except ImportError:
+    analyze_document = None
+
+try:
+    from .visualization_tools import create_graph
+except ImportError:
+    create_graph = None
 
 # Tavily 검색 (API 키 필요)
 try:
@@ -58,13 +85,7 @@ async def tavily_search(query: str) -> dict[str, Any]:
         client = TavilyClient(api_key=api_key)
         
         # Tavily 검색 수행 (search_depth="advanced"로 심층 검색)
-        # Token optimization: Limit results to 3
-        response = client.search(
-            query, 
-            search_depth="advanced", 
-            max_results=3,
-            include_raw_content=False
-        )
+        response = client.search(query, search_depth="advanced", max_results=5)
         
         formatted_results = []
         for result in response.get("results", []):
@@ -97,9 +118,6 @@ async def scrape_web_page(url: str) -> dict[str, Any]:
     Returns:
         dict[str, Any]: 페이지 내용 (url, content)
     """
-    import httpx
-    import re
-    
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
             headers = {
@@ -203,9 +221,6 @@ async def deep_research(query: str) -> dict[str, Any]:
         >>> result = await deep_research("LangGraph 최신 업데이트는?")
         >>> # {"query": "...", "summary": "LangGraph 2024년 주요 업데이트는..."}
     """
-    import httpx
-    import uuid
-    
     try:
         # 표준 A2A 프로토콜로 research_summary 에이전트 호출
         async with httpx.AsyncClient() as client:
@@ -307,6 +322,10 @@ async def deep_research(query: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 도구 목록 (기본 제공)
 # ---------------------------------------------------------------------------
+
+
+
+
 # ---------------------------------------------------------------------------
 # 커뮤니케이션 도구 (Gmail, Slack, Kakao)
 # ---------------------------------------------------------------------------
@@ -411,7 +430,7 @@ async def gmail_send_email(
         return {"error": f"Failed to send email: {str(e)}"}
 
 
-from .kakao_utils import KakaoUtils
+
 
 async def kakao_send_message(
     text: str,
@@ -506,16 +525,15 @@ async def kakao_send_message(
         return {"error": f"Failed to send Kakao message: {str(e)}"}
 
 
-from .google_utils import GoogleUtils
-from .date_utils import DateUtils
+
 
 async def resolve_date_expression(
     expression: str
 ) -> dict[str, Any]:
-    """자연어 날짜 표현(예: '이번주 금요일', '내일')을 정확한 날짜(YYYY-MM-DD)로 변환합니다.
+    """Resolves natural language date expressions to YYYY-MM-DD format.
     
     Args:
-        expression (str): 날짜 표현 (예: "다음주 월요일", "모레", "이번주 금요일", "tomorrow", "next friday"). 시간 표현(예: "오후 3시")은 제외하고 날짜만 입력하십시오.
+        expression: The date expression to resolve (e.g., "next Friday", "tomorrow").
     """
     try:
         iso_date = DateUtils.parse_relative_date(expression)
@@ -525,6 +543,35 @@ async def resolve_date_expression(
             return {"error": f"Could not parse date expression: {expression}"}
     except Exception as e:
         return {"error": f"Date parsing failed: {str(e)}"}
+
+async def parse_datetime(
+    expression: str
+) -> dict[str, Any]:
+    """Parses natural language datetime expressions into ISO 8601 format (YYYY-MM-DDTHH:MM:SS).
+    
+    USE THIS TOOL for any user input containing date AND/OR time information.
+    This handles Korean and English expressions for dates and times together.
+    
+    Examples:
+        "내일 오후 3시 30분" -> "2026-02-12T15:30:00"
+        "다음주 금요일 오전 10시" -> "2026-02-14T10:00:00"
+        "오늘 2시" -> "2026-02-11T14:00:00" (assumes afternoon for 1-5)
+    
+    Args:
+        expression: The datetime expression to parse (e.g., "내일 오후 3시 30분", "next Friday 2pm").
+    
+    Returns:
+        dict with "datetime" key containing ISO 8601 string, or "error" if parsing fails.
+    """
+    try:
+        iso_datetime = DateUtils.parse_datetime_expression(expression)
+        if iso_datetime:
+            return {"datetime": iso_datetime, "parsed_expression": expression}
+        else:
+            return {"error": f"Could not parse datetime expression: {expression}"}
+    except Exception as e:
+        return {"error": f"Datetime parsing failed: {str(e)}"}
+
 
 async def google_calendar_list(
     state: Annotated[dict, InjectedState],
@@ -569,11 +616,19 @@ async def google_calendar_create(
     
     Args:
         summary (str): 일정 제목
-        start_time (str): 시작 시간 (ISO 8601 형식). 오전/오후 명시가 없으면 기본적으로 '오전'으로 간주합니다.
+        start_time (str): 시작 시간 (ISO 8601 형식)
         end_time (str): 종료 시간 (ISO 8601 형식)
         description (str, optional): 일정 설명
 
-    (참고: "10시"라고만 하면 "오전 10시"로 해석해야 합니다. 오후 10시는 "22시" 또는 "오후 10시"로 명시되어야 합니다.)
+    시간 해석 규칙:
+    - "오전 10시" → 10:00
+    - "오후 3시" → 15:00
+    - "3시" (오전/오후 명시 없음):
+      - 1~5시: 일반적으로 오후 (13:00~17:00)로 해석 (회의는 대부분 오후)
+      - 6~8시: 맥락 고려 (출근 시간이면 오전, 퇴근 후면 오후)
+      - 9~11시: 오전 (09:00~11:00)
+      - 12시: 정오 (12:00)
+    - 애매한 경우, 일반적인 업무 시간(9시~18시)을 고려하여 판단
     """
     secrets = state.get("user_secrets", {})
     context = state.get("context", {})
@@ -600,29 +655,26 @@ async def google_calendar_create(
 
 
 # ---------------------------------------------------------------------------
-# 도구 목록 정의
+# 도구 목록 정의 (Tool Registry)
 # ---------------------------------------------------------------------------
 
-from ..agent_todo.todo_tools import update_todo
-import json  # Added for kakao template
-
-from .analysis_tools import analyze_document
-from .visualization_tools import generate_graph
 
 COMMON_TOOLS: list[Callable[..., Any]] = [
-    tavily_search,
-    scrape_web_page,
-    calculator,
-    deep_research,
-    slack_send_message,
-    gmail_send_email,
-    kakao_send_message,
-    google_calendar_list,
-    google_calendar_create,
-    resolve_date_expression,
-    analyze_document,
-    generate_graph
+    tool for tool in [
+        tavily_search,
+        scrape_web_page,
+        calculator,
+        deep_research,
+        slack_send_message,
+        gmail_send_email,
+        kakao_send_message,
+        resolve_date_expression,
+        parse_datetime,  # NEW: Combined date+time parser
+        google_calendar_list,
+        google_calendar_create,
+        # Document Analysis
+        analyze_document,
+        # Visualization
+        create_graph
+    ] if tool is not None
 ]
-
-# 각 에이전트는 필요한 도구만 선택해서 사용 가능
-# 예: TOOLS = [tavily_search, calculator]  # deep_research 제외
