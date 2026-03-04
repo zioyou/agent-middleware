@@ -25,10 +25,6 @@ try:
 except ImportError:
     GoogleUtils = None
 
-try:
-    from .kakao_utils import KakaoUtils
-except ImportError:
-    KakaoUtils = None
 
 try:
     from .date_utils import DateUtils
@@ -432,100 +428,6 @@ async def gmail_send_email(
 
 
 
-async def kakao_send_message(
-    text: str,
-    state: Annotated[dict, InjectedState],
-    target_name: str = None
-) -> dict[str, Any]:
-    """카카오톡 메시지 전송 (나에게 또는 친구에게)
-    
-    Args:
-        text (str): 보낼 메시지 내용
-        target_name (str, optional): 친구 이름 (닉네임). 생략 시 '나에게' 전송됩니다. (참고: 친구는 앱에 등록된 팀원이어야 하며 권한 동의가 필요합니다)
-    """
-    secrets = state.get("user_secrets", {})
-    
-    # Context fallback
-    if not secrets or not secrets.get("kakao_access_token"):
-        context = state.get("context", {})
-        if context:
-            secrets = context.get("user_secrets", {}) or secrets
-
-    # Retrieve credentials
-    access_token = secrets.get("kakao_access_token")
-    refresh_token = secrets.get("kakao_refresh_token")
-    client_id = secrets.get("kakao_client_id")
-    
-    if not access_token:
-        # Fallback to legacy key
-        access_token = secrets.get("kakao_api_key")
-    
-    if not access_token:
-        return {
-            "error": "Kakao Access Token not found. Please configure it in Settings."
-        }
-        
-    async def _execute_send(token: str):
-        if target_name:
-            # 1. Get Friends List
-            friends_data = await KakaoUtils.get_friends(token)
-            elements = friends_data.get("elements", [])
-            
-            # 2. Find friend
-            target = next((f for f in elements if target_name in f.get("profile_nickname", "")), None)
-            
-            if not target:
-                names = [f.get("profile_nickname") for f in elements]
-                return {
-                    "error": f"Friend '{target_name}' not found. Available friends: {names}. (Ensure they are Team Members and have agreed to 'Friends List' scope)"
-                }
-            
-            # 3. Send to Friend
-            return await KakaoUtils.send_to_friends(token, [target.get("uuid")], text)
-        else:
-            # Send to Me
-            return await KakaoUtils.send_to_me(token, text)
-
-    try:
-        # 1. Try sending
-        try:
-            result = await _execute_send(access_token)
-        except Exception as api_error:
-            # Catch API errors like 401 raised from utils
-            if "401" in str(api_error):
-                result = {"status": 401}
-            else:
-                raise api_error
-        
-        # 2. If 401 Unauthorized, try refreshing
-        if result.get("status") == 401:
-            if not refresh_token or not client_id:
-                return {"error": "Access Token expired (401) and no Refresh Token/Client ID provided."}
-                
-            # Attempt Refresh
-            token_data = await KakaoUtils.refresh_access_token(client_id, refresh_token)
-            new_access_token = token_data.get("access_token")
-            
-            if new_access_token:
-                # Retry
-                retry_result = await _execute_send(new_access_token)
-                if retry_result.get("status") == 200:
-                    return {
-                        "result": f"Message sent to {'friend ' + target_name if target_name else 'me'} successfully (Token Refreshed)."
-                    }
-                else:
-                     return {"error": f"Retry failed after refresh: {retry_result.get('body')}"}
-                     
-        if result.get("status") == 200:
-             return {"result": f"Message sent to {'friend ' + target_name if target_name else 'me'} successfully"}
-        else:
-            return {"error": f"Kakao API Error: {result.get('body')}"}
-            
-    except Exception as e:
-        return {"error": f"Failed to send Kakao message: {str(e)}"}
-
-
-
 
 async def resolve_date_expression(
     expression: str
@@ -667,7 +569,7 @@ COMMON_TOOLS: list[Callable[..., Any]] = [
         deep_research,
         slack_send_message,
         gmail_send_email,
-        kakao_send_message,
+
         resolve_date_expression,
         parse_datetime,  # NEW: Combined date+time parser
         google_calendar_list,
