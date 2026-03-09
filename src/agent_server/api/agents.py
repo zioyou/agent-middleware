@@ -43,7 +43,7 @@ from ..models import (
     AgentDiscoverRequest,
     AgentDiscoverResponse,
     AgentList,
-    AgentSchemas,
+    AgentSchema,
     AssistantCreate,
     AssistantSearchRequest,
     DiscoveredAgent,
@@ -299,7 +299,7 @@ async def get_agent(
     return _assistant_to_agent(assistant)
 
 
-@router.get("/{agent_id}/schemas", response_model=AgentSchemas)
+@router.get("/{agent_id}/schemas", response_model=AgentSchema)
 async def get_agent_schemas(
     agent_id: str,
     user: User = Depends(get_current_user),

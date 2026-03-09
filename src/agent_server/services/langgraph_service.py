@@ -135,6 +135,9 @@ class LangGraphService(TracedService):
         # 설정 파일에서 그래프 레지스트리 로드
         self._load_graph_registry()
 
+        # 외부 에이전트 캐시 및 DB 잔재 정리 (비정상 종료 시 남은 데이터 제거)
+        await self._clear_external_agents()
+
         # [신규] 외부 Agent Protocol 서버에서 에이전트 로드
         await self._load_external_sources()
 
@@ -623,57 +626,60 @@ class LangGraphService(TracedService):
         else:
             self._graph_cache.clear()
 
-    async def reload_external_sources(self) -> int:
-        """외부 에이전트 소스를 런타임에 리로드
+    async def _clear_external_agents(self) -> int:
+        """기존 외부 에이전트 캐시 및 DB 정리를 수행합니다.
         
-        웹 UI에서 버튼 클릭으로 호출되어 서버 재시작 없이
-        외부 에이전트 목록을 갱신합니다.
-        
-        동작 흐름:
-        1. 기존 외부 에이전트 정리 (레지스트리, 캐시, DB, A2A 레지스트리)
-        2. external_sources에서 에이전트 다시 로드
-        3. 어시스턴트 및 A2A 레지스트리 갱신
-        
-        Returns:
-            int: 로드된 외부 에이전트 수
+        과거 로드 실패했거나 삭제된 외부 에이전트가 UI에 남지 않도록
+        DB에서 `external:%` 패턴을 가진 어시스턴트를 일괄 삭제합니다.
         """
         from sqlalchemy import delete
-        from uuid import uuid5
-        from ..constants import ASSISTANT_NAMESPACE_UUID
         from ..core.orm import Assistant as AssistantORM, get_session
         from .agent_registry_service import agent_registry_service
         
-        # 1. 기존 외부 에이전트 정리
+        # 1. 레지스트리 및 캐시에서 제거
         external_graph_ids = [
             gid for gid in list(self._graph_registry.keys()) 
             if gid.startswith("external:")
         ]
         
-        # 1a. 레지스트리 및 캐시에서 제거
         for gid in external_graph_ids:
             self._graph_registry.pop(gid, None)
             self._graph_cache.pop(gid, None)
         
-        # 1b. DB에서 외부 어시스턴트 삭제
-        if external_graph_ids:
-            session_gen = get_session()
-            session = await anext(session_gen)
-            try:
-                # graph_id가 'external:'로 시작하는 어시스턴트 삭제
-                await session.execute(
-                    delete(AssistantORM).where(
-                        AssistantORM.graph_id.like("external:%")
-                    )
+        # 2. A2A 레지스트리에서 외부 소스 제거 (현재 등록된 전체 목록 기준)
+        registered_agents = await agent_registry_service.list_agents()
+        for agent in registered_agents:
+            if agent.source_type == "external":
+                await agent_registry_service.unregister_agent(agent.graph_id)
+        
+        # 3. DB에서 외부 어시스턴트 무조건 모두 삭제 (가장 중요)
+        deleted_count = 0
+        session_gen = get_session()
+        session = await anext(session_gen)
+        try:
+            result = await session.execute(
+                delete(AssistantORM).where(
+                    AssistantORM.graph_id.like("external:%")
                 )
-                await session.commit()
-            finally:
-                await session.close()
+            )
+            await session.commit()
+            deleted_count = result.rowcount
+            print(f"🔄 Cleared {deleted_count} external agents from DB")
+        except Exception as e:
+            print(f"Error deleting external agents from DB: {e}")
+        finally:
+            await session.close()
+            
+        return deleted_count
+
+    async def reload_external_sources(self) -> int:
+        """외부 에이전트 소스를 런타임에 리로드
         
-        # 1c. A2A 레지스트리에서 외부 에이전트 제거
-        for gid in external_graph_ids:
-            await agent_registry_service.unregister_agent(gid)
-        
-        print(f"🔄 Cleared {len(external_graph_ids)} external agents (registry + DB)")
+        웹 UI에서 버튼 클릭으로 호출되어 서버 재시작 없이
+        외부 에이전트 목록을 갱신합니다.
+        """
+        # 1. 기존 외부 에이전트 일괄 정리
+        await self._clear_external_agents()
         
         # 2. 외부 소스에서 다시 로드
         await self._load_external_sources()

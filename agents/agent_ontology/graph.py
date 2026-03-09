@@ -31,6 +31,7 @@ from ..common.tools import (
     calculator,
     COMMON_TOOLS
 )
+from .tools import call_subagent
 from ..common.model_utils import load_chat_model
 from ..common.file_saver import file_saver_node
 
@@ -80,7 +81,7 @@ filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob
 
 # Define Tool Sets
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
-WORKER_TOOLS = COMMON_TOOLS + filesystem_tools # tavily, calculator, fs tools
+WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent] # tavily, calculator, fs, subagent tools
 
 # ============================================================================
 # NODES
@@ -454,8 +455,8 @@ graph = builder.compile()
 # Metadata for UI
 # Metadata for UI
 graph._a2a_metadata = {
-    "name": "계획 실행 에이전트 (Todo)",
-    "description": "사용자의 요청에 대해 무조건적으로 계획을 수립하고 실행합니다. (Strict Planning Mode)",
+    "name": "지능형 온톨로지 에이전트(agent_ontology)",
+    "description": "다양한 서브 에이전트와 도구를 활용하여 회사 내부 규정 및 조직 정보를 지능적으로 탐색하는 오케스트레이터입니다.",
     "capabilities": {
         "streaming": True,
         "state_transition_history": True

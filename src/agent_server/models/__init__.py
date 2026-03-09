@@ -37,7 +37,7 @@ from .assistants import (
     Agent,
     AgentCapabilities,
     AgentList,
-    AgentSchemas,
+    AgentSchema,
     Assistant,
     AssistantCreate,
     AssistantList,
@@ -70,7 +70,9 @@ from .runs import (
     RunCreate,
     RunSearchRequest,
     RunStatus,
+    RunStream,
     RunWaitResponse,
+    StreamMode,
 )
 from .store import (
     StoreDeleteRequest,
@@ -177,7 +179,7 @@ __all__ = [
     "Agent",
     "AgentCapabilities",
     "AgentList",
-    "AgentSchemas",
+    "AgentSchema",
     "Assistant",
     "AssistantCreate",
     "AssistantList",
@@ -213,7 +215,9 @@ __all__ = [
     "RunCreate",
     "RunSearchRequest",
     "RunStatus",
+    "RunStream",
     "RunWaitResponse",
+    "StreamMode",
     # Store
     "StoreDeleteRequest",
     "StoreGetResponse",

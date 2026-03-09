@@ -607,8 +607,8 @@ async def get_thread_history_post(
         try:
             agent = await langgraph_service.get_graph(graph_id)
         except Exception as e:
-            logger.exception("Failed to load graph '%s' for history", graph_id)
-            raise HTTPException(500, f"Failed to load graph '{graph_id}': {str(e)}") from e
+            logger.exception("Failed to load graph '%s' for history. Returning empty history.", graph_id)
+            return []
 
         # 사용자 컨텍스트와 thread_id를 포함한 설정 구성
         config_dict: dict[str, Any] = create_thread_config(thread_id, user, {})

@@ -92,6 +92,7 @@ from .api.runs_standalone import router as runs_standalone_router
 from .api.store import router as store_router
 from .api.threads import router as threads_router
 from .api.webhooks.slack import router as slack_webhook_router
+from .api.webhooks.agent_callback import router as subagent_webhook_router
 from .core.auth_middleware import get_auth_backend, on_auth_error
 from .core.cache import cache_manager
 from .core.database import db_manager
@@ -322,7 +323,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=_cors_allow_credentials,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],  # 명시적 메서드
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],  # 명시적 헤더
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID", "X-Api-Key"],  # 명시적 헤더
 )
 
 # 1.5 Static Files Mounting (for generated images)
@@ -449,6 +450,9 @@ app.include_router(google_auth_router, tags=["Google Auth"])
 
 # /slack/webhook - Slack webhook
 app.include_router(slack_webhook_router, tags=["Slack Webhook"])
+
+# /api/webhooks/subagent_callback - Subagent webhook receiver
+app.include_router(subagent_webhook_router, tags=["Subagent Webhook"])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

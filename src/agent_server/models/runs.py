@@ -31,9 +31,20 @@ LangGraph 그래프 실행의 전체 생명주기를 관리하며, 스트리밍,
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class StreamMode(str, Enum):
+    values = "values"
+    messages = "messages"
+    updates = "updates"
+    custom = "custom"
+    events = "events"
+    messages_tuple = "messages-tuple"
+
 
 
 class RunCreate(BaseModel):
@@ -88,16 +99,6 @@ class RunCreate(BaseModel):
         description="체크포인트 설정 (예: {'checkpoint_id': '...', 'checkpoint_ns': ''}). 특정 체크포인트에서 시작 시 사용",
     )
 
-    # 스트리밍 설정
-    stream: bool = Field(
-        False, description="스트리밍 응답 활성화 여부. True시 SSE(Server-Sent Events)로 실시간 이벤트 전송"
-    )
-
-    stream_mode: str | list[str] | None = Field(
-        None,
-        description="LangGraph 스트림 모드 지정. 'values', 'updates', 'messages', 'events' 등 지원. 리스트로 여러 모드 동시 요청 가능",
-    )
-
     # 클라이언트 연결 관리
     on_disconnect: str | None = Field(
         None,
@@ -124,14 +125,6 @@ class RunCreate(BaseModel):
 
     interrupt_after: str | list[str] | None = Field(
         None, description="실행 직후에 중단할 노드 이름(들). '*'는 모든 노드에서 중단. 결과 검증 시 유용"
-    )
-
-    # ---------------------------------------------------------------------------
-    # 서브그래프 설정
-    # ---------------------------------------------------------------------------
-    stream_subgraphs: bool | None = Field(
-        False,
-        description="스트리밍에 서브그래프 이벤트 포함 여부. True시 모든 서브그래프 이벤트 포함, False(기본값)시 제외. 하위 호환성을 위해 기본값 False",
     )
 
     @model_validator(mode="after")
@@ -166,7 +159,22 @@ class RunCreate(BaseModel):
         return self
 
 
-class Run(BaseModel):
+class RunStream(RunCreate):
+    """스트리밍 실행 생성 요청 모델"""
+
+    stream_mode: StreamMode | list[StreamMode] | None = Field(
+        "values",
+        description="LangGraph 스트림 모드 지정. 'values', 'updates', 'messages', 'events' 등 지원. 리스트로 여러 모드 동시 요청 가능",
+    )
+
+    # 서브그래프 설정
+    stream_subgraphs: bool | None = Field(
+        False,
+        description="스트리밍에 서브그래프 이벤트 포함 여부. True시 모든 서브그래프 이벤트 포함, False(기본값)시 제외. 하위 호환성을 위해 기본값 False",
+    )
+
+
+class Run(RunStream):
     """실행 엔티티 모델
 
     데이터베이스에 저장된 실행의 전체 상태를 표현하는 모델입니다.

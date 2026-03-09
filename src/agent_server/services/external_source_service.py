@@ -178,6 +178,7 @@ class ExternalSourceService:
         """특정 에이전트의 전체 설정 가져오기
         
         확장 엔드포인트: GET /agents/{agent_id}/config
+        표준 폴백: GET /agents/{agent_id}/schemas
         
         Args:
             url: 외부 서버 URL
@@ -190,29 +191,72 @@ class ExternalSourceService:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.get(f"{url}/agents/{agent_id}/config")
                 
-                if response.status_code != 200:
+                # If /config extension is missing, fallback to /schemas
+                if response.status_code == 404:
+                    logger.info(f"Extension /config not found for {agent_id}, falling back to /schemas")
+                    schemas_response = await client.get(f"{url}/agents/{agent_id}/schemas")
+                    if schemas_response.status_code != 200:
+                        logger.warning(f"Failed to fetch schemas for {agent_id}: HTTP {schemas_response.status_code}")
+                        return None
+                    
+                    schema_data = schemas_response.json()
+                    config_schema = schema_data.get("config_schema", {}).get("properties", {})
+                    
+                    # Extract defaults from schema to mimic config
+                    config = {
+                        "graph_type": config_schema.get("graph_type", {}).get("default", "react"),
+                        "system_prompt": config_schema.get("system_prompt", {}).get("default", ""),
+                        "model": config_schema.get("model", {}).get("default", {}),
+                        "tools": config_schema.get("tools", {}).get("default", [])
+                    }
+                    
+                    # Try to get name and description from cache (populated by /search)
+                    cached_agent = self.get_cached_agent(url, agent_id)
+                    agent_name = cached_agent.name if cached_agent else agent_id
+                    agent_desc = cached_agent.description if cached_agent else ""
+                    
+                    data = {"agent_id": agent_id, "name": agent_name, "description": agent_desc, "config": config}
+                elif response.status_code != 200:
                     logger.warning(f"Failed to fetch config for {agent_id}: HTTP {response.status_code}")
                     return None
-                
-                data = response.json()
-                config = data.get("config", {})
+                else:
+                    data = response.json()
+                    config = data.get("config", {})
                 
                 # 도구 정의 파싱
                 tools = []
                 for t in config.get("tools", []):
+                    # Handle both dict formats (from /config) and schema parameter formats (from /schemas)
+                    tool_params = []
+                    
+                    if "parameters" in t and "properties" in t["parameters"]:
+                        # Standard Schema format
+                        props = t["parameters"]["properties"]
+                        reqs = t["parameters"].get("required", [])
+                        for p_name, p_val in props.items():
+                             tool_params.append({
+                                 "name": p_name,
+                                 "type": p_val.get("type", "string"),
+                                 "description": p_val.get("description", ""),
+                                 "required": p_name in reqs
+                             })
+                    else:
+                        # Extension Config format
+                        tool_params = t.get("params", [])
+                        
                     tools.append(ExternalToolDef(
                         name=t["name"],
                         type=t.get("type", "rest"),
                         description=t.get("description", ""),
                         endpoint=t["endpoint"],
                         method=t.get("method", "POST"),
-                        params=t.get("params", [])
+                        params=tool_params
                     ))
                 
                 return ExternalAgentConfig(
                     agent_id=data["agent_id"],
-                    name=data["name"],
-                    description=data["description"],
+                    name=data.get("name", agent_id),
+                    description=data.get("description", ""),
                     graph_type=config.get("graph_type", "react"),
                     system_prompt=config.get("system_prompt", ""),
                     model=config.get("model", {}),

@@ -4,11 +4,12 @@
     "resoning_hitl": "./agents/agent_reason_hitl/graph.py:graph",
     "sub_agent": "./agents/agent_subagent/graph.py:graph",
     "research_summary": "./agents/agent_research_summary/graph.py:graph",
-    "todo": "./agents/agent_todo/graph.py:graph"
+    "todo": "./agents/agent_todo/graph.py:graph",
+    "ontology": "./agents/agent_ontology/graph.py:graph"
   },
   "external_sources": [
     {
-      "url": "http://host.docker.internal:8003",
+      "url": "http://172.16.1.21:8000",
       "name": "Local Test Agents",
       "enabled": true
     }

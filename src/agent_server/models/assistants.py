@@ -9,7 +9,7 @@
 • Assistant - 어시스턴트 엔티티 (응답)
 • AssistantList - 어시스턴트 목록 응답
 • AssistantSearchRequest - 어시스턴트 검색 요청
-• AgentSchemas - 그래프 스키마 정의 (input/output/state/config)
+• AgentSchema - 그래프 스키마 정의 (input/output/state/config)
 
 Config vs Context (LangGraph 0.6.0+):
 • config: LangGraph 실행 시 런타임 설정 (예: model_name, temperature)
@@ -237,7 +237,7 @@ class AssistantSearchRequest(BaseModel):
     )
 
 
-class AgentSchemas(BaseModel):
+class AgentSchema(BaseModel):
     """그래프 스키마 정의 모델 (클라이언트 통합용)
 
     LangGraph 그래프의 입력/출력/상태/설정 스키마를 JSON Schema 형식으로 제공합니다.
@@ -268,7 +268,7 @@ class AgentSchemas(BaseModel):
     사용 예:
         # 그래프 스키마 조회
         GET /assistants/{assistant_id}/schemas
-        -> AgentSchemas(
+        -> AgentSchema(
             input_schema={...},
             output_schema={...},
             state_schema={...},

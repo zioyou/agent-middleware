@@ -59,6 +59,7 @@ from ..models import (
     RunBatchResponse,
     RunBatchResultItem,
     RunCreate,
+    RunStream,
     RunStatus,
     User,
 )
@@ -290,14 +291,22 @@ async def create_run(
 
     print(f"[create_run] request for thread_id={thread_id}: {request.model_dump()}")
     # resume 명령 요구사항을 조기에 검증
+    thread_stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id)
+    thread = await session.scalar(thread_stmt)
+    
     if request.command and request.command.get("resume") is not None:
         # 스레드가 존재하고 중단된 상태인지 확인
-        thread_stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id)
-        thread = await session.scalar(thread_stmt)
         if not thread:
             raise HTTPException(404, f"Thread '{thread_id}' not found")
         if thread.status != "interrupted":
             raise HTTPException(400, "Cannot resume: thread is not in interrupted state")
+    else:
+        # Command(resume)가 없는 일반 요청인 경우, 스레드가 interrupted면 차단
+        if thread and thread.status == "interrupted":
+            raise HTTPException(
+                status_code=409, 
+                detail="Cannot process new message. Thread is currently waiting for a sub-agent task to complete."
+            )
 
     run_id = str(uuid4())
 
@@ -379,9 +388,9 @@ async def create_run(
 
     # 비동기로 실행 시작
     # 트랜잭션 충돌을 피하기 위해 session을 전달하지 않음
-    stream_modes = _normalize_stream_modes(request.stream_mode)
+    stream_modes = _normalize_stream_modes(getattr(request, "stream_mode", None))
 
-    subgraphs_flag = bool(request.stream_subgraphs)
+    subgraphs_flag = bool(getattr(request, "stream_subgraphs", False))
 
     task = asyncio.create_task(
         execute_run_async(
@@ -411,7 +420,7 @@ async def create_run(
 @router.post("/threads/{thread_id}/runs/stream")
 async def create_and_stream_run(
     thread_id: str,
-    request: RunCreate,
+    request: RunStream,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -450,14 +459,22 @@ async def create_and_stream_run(
 
     print(f"[create_and_stream_run] request for thread_id={thread_id}: {request.model_dump()}")
     # resume 명령 요구사항을 조기에 검증
+    thread_stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id)
+    thread = await session.scalar(thread_stmt)
+    
     if request.command and request.command.get("resume") is not None:
         # 스레드가 존재하고 중단된 상태인지 확인
-        thread_stmt = select(ThreadORM).where(ThreadORM.thread_id == thread_id)
-        thread = await session.scalar(thread_stmt)
         if not thread:
             raise HTTPException(404, f"Thread '{thread_id}' not found")
         if thread.status != "interrupted":
             raise HTTPException(400, "Cannot resume: thread is not in interrupted state")
+    else:
+        # Command(resume)가 없는 일반 스트리밍 요청인 경우, 스레드가 interrupted면 차단
+        if thread and thread.status == "interrupted":
+            raise HTTPException(
+                status_code=409, 
+                detail="Cannot process new message. Thread is currently waiting for a sub-agent task to complete."
+            )
 
     run_id = str(uuid4())
 

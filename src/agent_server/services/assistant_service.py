@@ -23,9 +23,12 @@
 """
 
 import uuid
+import logging
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from fastapi import Depends, HTTPException
 from langgraph.graph.state import CompiledStateGraph
@@ -940,6 +943,16 @@ class AssistantService(TracedService):
 
             return {"graph_id": assistant.graph_id, **schemas}
 
+        except ValueError as e:
+            logger.warning("Graph '%s' not found for schemas. Returning empty schemas. Error: %s", assistant.graph_id, e)
+            return {
+                "graph_id": assistant.graph_id,
+                "input_schema": {},
+                "output_schema": {},
+                "state_schema": {},
+                "config_schema": {},
+                "context_schema": {}
+            }
         except Exception as e:
             raise HTTPException(400, f"Failed to extract schemas: {str(e)}") from e
 
@@ -1079,6 +1092,9 @@ class AssistantService(TracedService):
 
         except HTTPException:
             raise
+        except ValueError as e:
+            logger.warning("Graph '%s' not found for graphing. Returning empty graph info. Error: %s", assistant.graph_id, e)
+            return {"nodes": [], "edges": [], "tools": [], "functions": [], "subagents": []}
         except Exception as e:
             raise HTTPException(400, f"Failed to get graph: {str(e)}") from e
 
@@ -1295,6 +1311,9 @@ class AssistantService(TracedService):
                     return response.content
                 raise e # 렌더링 실패 시 원래 예외 발생
             
+        except ValueError as e:
+            logger.warning("Graph '%s' not found for image. Failing gracefully. Error: %s", assistant.graph_id, e)
+            raise HTTPException(404, f"Graph image not available because graph was not found: {str(e)}") from e
         except Exception as e:
             raise HTTPException(400, f"Failed to generate graph image: {str(e)}") from e
 

@@ -233,6 +233,14 @@ class DynamicGraphFactory:
         graph._a2a_metadata = {
             "name": config.name,
             "description": config.description,
+            "skills": [
+                {
+                    "id": t.name,
+                    "name": t.name,
+                    "description": t.description
+                }
+                for t in config.tools
+            ],
             "capabilities": {
                 "ap.io.messages": True,
                 "ap.io.streaming": True,
