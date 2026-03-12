@@ -49,6 +49,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
+import os
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from langchain_core.runnables import RunnableConfig
@@ -157,6 +159,25 @@ async def create_thread(
     """
 
     thread_id = str(uuid4())
+    
+    # [NEW] 원격 서브 에이전트(Agent Protocol 호환)에 먼저 스레드를 생성하고,
+    # 반환된 thread_id가 있으면 우리 로컬 thread_id로 사용합니다.
+    remote_base_url = os.getenv("SUBAGENT_BASE_URL", "http://172.16.1.21:8000")
+    try:
+        async with httpx.AsyncClient() as client:
+            # 외부 서버의 /threads 에 POST 요청
+            resp = await client.post(f"{remote_base_url}/threads", json={}, timeout=5.0)
+            if resp.status_code == 200:
+                remote_data = resp.json()
+                if "thread_id" in remote_data:
+                    thread_id = remote_data["thread_id"]
+                    print(f"============================================================")
+                    print(f"🔥 [SUCCESS] Fetched Remote Subagent Thread ID: {thread_id} 🔥")
+                    print(f"============================================================")
+                    logger.info(f"Successfully created remote thread: {thread_id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to create remote thread: {e}")
+        logger.warning(f"Failed to create remote thread, using local UUID. error: {e}")
 
     # 필수 필드를 포함한 메타데이터 구성
     metadata = request.metadata or {}

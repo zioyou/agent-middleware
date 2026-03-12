@@ -141,9 +141,15 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
                 # Intercept!
                 print(f"[GUARDRAIL] Intercepted direct execution attempt: {tc['name']}")
                 
-                # Create a task content description from the tool call
-                args_str = ", ".join([f"{k}='{v}'" for k, v in tc["args"].items()])
-                task_content = f"Execute tool '{tc['name']}' with args: {args_str}"
+                # Create a user-friendly task content description from the intercepted tool call
+                tool_name = tc.get("name", "unknown")
+                if tool_name in ["google_calendar_create", "google_calendar_search", "google_mail_send", "google_mail_search"]:
+                    task_content = f"구글 워크스페이스 작업({tool_name}) 수행"
+                elif tool_name in ["tavily_search"]:
+                    query_arg = tc.get("args", {}).get("query", "")
+                    task_content = f"웹 검색 진행: {query_arg}"
+                else:
+                    task_content = f"시스템 작업({tool_name}) 수행"
                 
                 # Construct a fake write_todos call
                 fake_call = {

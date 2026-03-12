@@ -255,6 +255,17 @@ class LangGraphService(TracedService):
                     checkpointer_cm = await db_manager.get_checkpointer()
                     store_cm = await db_manager.get_store()
                     
+                    # [NEW] LangGraph Store에 서브 에이전트 메타데이터 캐싱
+                    try:
+                        import dataclasses
+                        config_dict = dataclasses.asdict(config)
+                        # 각 에이전트가 자신의 출처 서버 URL을 알 수 있도록 기록
+                        config_dict["source_url"] = url
+                        await store_cm.aput(("subagents",), agent.agent_id, config_dict)
+                        print(f"     ✅ Cached subagent '{agent.agent_id}' to Store (source_url={url})")
+                    except Exception as e:
+                        print(f"     ⚠️  Failed to cache subagent {agent.agent_id} to Store: {e}")
+                    
                     try:
                         # 이미 컴파일된 그래프에 체크포인터 주입
                         graph_with_memory = graph.copy(update={

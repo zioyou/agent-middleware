@@ -11,11 +11,12 @@ from typing import Any, Sequence, Union, Literal, Dict
 from datetime import datetime, timedelta
 
 from langchain.agents.middleware import TodoListMiddleware
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
 # Import middlewares from verified paths
 from deepagents.middleware import SummarizationMiddleware
@@ -31,7 +32,8 @@ from ..common.tools import (
     calculator,
     COMMON_TOOLS
 )
-from .tools import call_subagent
+from .tools import call_subagent, find_available_subagents
+from ..common.visualization_tools import create_graph
 from ..common.model_utils import load_chat_model
 from ..common.file_saver import file_saver_node
 
@@ -81,7 +83,10 @@ filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob
 
 # Define Tool Sets
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
-WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent] # tavily, calculator, fs, subagent tools
+WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent, find_available_subagents, create_graph]
+
+# request_approval이 삭제되었으므로 바로 WORKER_TOOLS를 사용
+WORKER_TOOLS_EXEC = WORKER_TOOLS
 
 # ============================================================================
 # NODES
@@ -142,10 +147,15 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
                 # Intercept!
                 print(f"[GUARDRAIL] Intercepted direct execution attempt: {tc['name']}")
                 
-                # Create a task content description from the tool call
-                args_str = ", ".join([f"{k}='{v}'" for k, v in tc["args"].items()])
-                task_content = f"Execute tool '{tc['name']}' with args: {args_str}"
-                
+                # Create a user-friendly task content description from the intercepted tool call
+                tool_name = tc.get("name", "unknown")
+                if tool_name in ["call_subagent", "find_available_subagents"]:
+                    task_content = "사내 시스템 데이터 수집 및 분석"
+                elif tool_name in ["tavily_search"]:
+                    query_arg = tc.get("args", {}).get("query", "")
+                    task_content = f"웹 검색 진행: {query_arg}"
+                else:
+                    task_content = f"시스템 작업({tool_name}) 수행"
                 # Construct a fake write_todos call
                 fake_call = {
                     "name": "write_todos",
@@ -323,6 +333,10 @@ async def finalizer_node(state: State, config: RunnableConfig) -> dict:
         "final_answer": response.content
     }
 
+# (human_approval_node 제거됨 - interrupt()가 call_subagent 도구 내부에서 직접 처리)
+
+
+
 # ============================================================================
 # EDGES & ROUTING
 # ============================================================================
@@ -368,15 +382,19 @@ def route_dispatcher(state: State) -> str:
 
 def route_worker_output(state: State) -> str:
     """
-    Check if worker called a tool or finished.
+    Worker 출력에 따라 다음 노드 결정.
+    tool_calls가 있으면 worker_tools로, 텍스트 응답이면 task_completer로 분기합니다.
+    
+    참고: HITL(Human-in-the-Loop) 승인은 call_subagent 도구 함수 내부에서
+    langgraph.types.interrupt()를 직접 호출하는 방식으로 처리됩니다.
+    별도의 human_approval 노드는 사용하지 않습니다.
     """
     last_msg = state["messages"][-1]
-    
-    # If tool calls -> execute tools (ReAct loop)
+
     if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
         return "worker_tools"
-    
-    # If text response -> Task Completed
+
+    # 텍스트 응답 → 태스크 완료
     return "task_completer"
 
 # ============================================================================
@@ -393,7 +411,8 @@ builder.add_node("planner", planner_node)
 builder.add_node("planner_tools", ToolNode(PLANNER_TOOLS))
 builder.add_node("dispatcher", dispatcher_node)
 builder.add_node("worker", worker_node)
-builder.add_node("worker_tools", ToolNode(WORKER_TOOLS))
+builder.add_node("worker_tools", ToolNode(WORKER_TOOLS_EXEC))
+# (human_approval 노드 제거 - interrupt()는 call_subagent 도구 내부에서 처리)
 builder.add_node("task_completer", task_completer_node)
 builder.add_node("finalizer", finalizer_node)
 
@@ -441,7 +460,9 @@ builder.add_conditional_edges(
         "task_completer": "task_completer"
     }
 )
-builder.add_edge("worker_tools", "worker") # ReAct Loop
+# worker_tools -> worker (ReAct loop)
+# interrupt()는 call_subagent 도구 내부에서 발생하므로 별도의 HITL 라우팅 불필요
+builder.add_edge("worker_tools", "worker")
 
 # 6. Task Completion -> Back to Dispatcher
 builder.add_edge("task_completer", "dispatcher")
@@ -450,15 +471,17 @@ builder.add_edge("task_completer", "dispatcher")
 builder.add_edge("finalizer", END)
 
 # Compile
-graph = builder.compile()
+from langgraph.checkpoint.memory import MemorySaver
+memory = MemorySaver()
+graph = builder.compile(checkpointer=memory)
 
-# Metadata for UI
 # Metadata for UI
 graph._a2a_metadata = {
     "name": "지능형 온톨로지 에이전트(agent_ontology)",
     "description": "다양한 서브 에이전트와 도구를 활용하여 회사 내부 규정 및 조직 정보를 지능적으로 탐색하는 오케스트레이터입니다.",
     "capabilities": {
         "streaming": True,
-        "state_transition_history": True
+        "state_transition_history": True,
+        "human_in_the_loop": True,
     }
 }

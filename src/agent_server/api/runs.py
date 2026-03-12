@@ -305,7 +305,7 @@ async def create_run(
         if thread and thread.status == "interrupted":
             raise HTTPException(
                 status_code=409, 
-                detail="Cannot process new message. Thread is currently waiting for a sub-agent task to complete."
+                detail="Cannot process new message. Thread is currently interrupted and waiting for user approval or action. Please respond to the pending request."
             )
 
     run_id = str(uuid4())
@@ -473,7 +473,7 @@ async def create_and_stream_run(
         if thread and thread.status == "interrupted":
             raise HTTPException(
                 status_code=409, 
-                detail="Cannot process new message. Thread is currently waiting for a sub-agent task to complete."
+                detail="Cannot process new message. Thread is currently interrupted and waiting for user approval or action. Please respond to the pending request."
             )
 
     run_id = str(uuid4())
@@ -1383,28 +1383,42 @@ async def execute_run_async(
                     final_output = raw_event
 
         # ──────────────────────────────────────────────────────────────────────────
-        # 스트림 완료 후 스레드 상태를 확인하여 interrupt 여부 판단
+        # 스트림 완료 후 interrupt 여부 최종 판단
         # ──────────────────────────────────────────────────────────────────────────
-        # LangGraph의 interrupt()는 이벤트에 __interrupt__를 추가하지만,
-        # Docker 환경 등에서는 이 이벤트가 제대로 전달되지 않는 경우가 있음.
-        # 더 확실한 방법은 스레드 상태의 'next' 필드를 확인하는 것.
-        #
-        # 참고: LangGraph issue #1395 - Docker 환경에서 __interrupt__ 이벤트 누락 문제
-        #       https://github.com/langchain-ai/langgraph/issues/1395
-        # ──────────────────────────────────────────────────────────────────────────
-        if not has_interrupt:
+        # 핵심 원칙:
+        # - 일반(새) run: __interrupt__ 이벤트 or aget_state().tasks 체크
+        # - resume run: __interrupt__ 이벤트만 신뢰.
+        #   aget_state()는 이전 interrupt 지점 체크포인트를 반환해 tasks/interrupts가
+        #   항상 찬 상태로 보이므로 resume run에서는 사용 금지.
+        is_resume_run = (command is not None and isinstance(command, dict) and command.get("resume") is not None)
+        
+        if not has_interrupt and not is_resume_run:
             try:
                 thread_state = await graph.aget_state(cast("RunnableConfig", run_config))
-                # 'next' 필드가 비어있지 않으면 그래프가 중단되어 다음 노드를 기다리는 상태
-                if thread_state and hasattr(thread_state, "next") and thread_state.next:
+                ts_next = getattr(thread_state, "next", None)
+                ts_tasks = getattr(thread_state, "tasks", None) or []
+                
+                # tasks 중 하나라도 interrupts 가 있으면 → 실제 interrupt 상태
+                has_live_interrupt = any(
+                    getattr(task, "interrupts", None)
+                    for task in ts_tasks
+                )
+                
+                print(f"[execute_run_async] VERIFYING STATE (new run): next={ts_next}, tasks={len(ts_tasks)}, live_interrupt={has_live_interrupt}")
+                
+                if has_live_interrupt:
                     has_interrupt = True
-                    logger.info(
-                        f"[execute_run_async] 스레드 상태로 interrupt 감지: run_id={run_id}, next={thread_state.next}"
-                    )
+                    print(f"[execute_run_async] Live interrupt detected via tasks: run_id={run_id}")
+                elif ts_next:
+                    print(f"[execute_run_async] next={ts_next} but no live interrupt tasks - treating as completed")
             except Exception as e:
-                # 스레드 상태 확인 실패 시 기존 이벤트 기반 감지 결과 사용
-                logger.warning(f"[execute_run_async] 스레드 상태 확인 실패: {e}, 이벤트 기반 감지 결과 사용")
+                print(f"[execute_run_async] 스레드 상태 확인 실패: {e}, 이벤트 기반 결과 사용")
+        elif is_resume_run and not has_interrupt:
+            print(f"[execute_run_async] Resume run completed without new __interrupt__ event - treating as done")
 
+
+
+        print(f"[execute_run_async] FINAL INTERRUPT STATUS: {has_interrupt}")
         if has_interrupt:
             await update_run_status(run_id, "interrupted", output=final_output or {}, session=session)
             if not session:

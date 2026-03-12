@@ -18,6 +18,10 @@ class State(FilesystemState):
     task_results: dict[int, str]  # Storage for results of each task (index -> result text)
     final_answer: Optional[str]  # The final synthesized answer
     
+    # Subagent Response Cache
+    # Key: "{agent_id}:{input_md5[:8]}" / Value: {agent_id, input_data, response, cached_at}
+    subagent_cache: dict[str, Any]
+    
     # User Secrets (Injected from client)
     user_secrets: dict[str, str]
     
