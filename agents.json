@@ -2,7 +2,6 @@
   "graphs": {
     "resoning": "./agents/agent_reason/graph.py:graph",
     "resoning_hitl": "./agents/agent_reason_hitl/graph.py:graph",
-    "sub_agent": "./agents/agent_subagent/graph.py:graph",
     "research_summary": "./agents/agent_research_summary/graph.py:graph",
     "todo": "./agents/agent_todo/graph.py:graph",
     "ontology": "./agents/agent_ontology/graph.py:graph"

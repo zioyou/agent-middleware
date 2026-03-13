@@ -387,6 +387,17 @@ class LangGraphService(TracedService):
                         user_id="system",
                     )
                 )
+
+            # agents.json에서 제거된 system 어시스턴트 정리
+            from sqlalchemy import delete as sa_delete
+
+            current_graph_ids = list(self._graph_registry.keys())
+            await session.execute(
+                sa_delete(AssistantORM).where(
+                    AssistantORM.user_id == "system",
+                    AssistantORM.graph_id.not_in(current_graph_ids),
+                )
+            )
             await session.commit()
         finally:
             await session.close()
