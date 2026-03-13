@@ -97,7 +97,7 @@ def update_todo(
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"[DEBUG update_todo] CRICHITAL ERROR:\n{error_trace}")
+        print(f"[DEBUG update_todo] CRITICAL ERROR:\n{error_trace}")
         return Command(
             update={},
             output=f"Internal Error in update_todo: {str(e)}"

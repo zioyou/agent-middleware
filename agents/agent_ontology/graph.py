@@ -7,8 +7,11 @@ Architecture:
                                          -> Finalizer (LLM) -> END
 """
 
+import logging
 from typing import Any, Sequence, Union, Literal, Dict
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
@@ -264,10 +267,18 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     input_messages = [system_msg, trigger_msg] + react_history
     
     # 4. Invoke Model
-    model_bound = model_instance.bind_tools(WORKER_TOOLS)
-    response = await model_bound.ainvoke(input_messages, config)
-    
-    return {"messages": [response]}
+    try:
+        model_bound = model_instance.bind_tools(WORKER_TOOLS)
+        response = await model_bound.ainvoke(input_messages, config)
+        return {"messages": [response]}
+    except Exception as e:
+        logger.error(f"[worker_node] Task {idx} 실행 실패: {e}", exc_info=True)
+        new_todos = [t.copy() for t in todos]
+        new_todos[idx]["status"] = "failed"
+        return {
+            "messages": [AIMessage(content=f"태스크 실행 중 오류가 발생했습니다: {str(e)}")],
+            "todos": new_todos,
+        }
 
 async def task_completer_node(state: State, config: RunnableConfig) -> dict:
     """

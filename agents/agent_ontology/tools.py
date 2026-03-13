@@ -235,7 +235,7 @@ async def call_subagent(
     wait_url = f"{subagent_base_url}/runs/wait"
     
     print(f"[call_subagent] POST {wait_url} | agent={agent_id} | task_msgs={len(task_messages)}")
-    print(f"[call_subagent] Full payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+    print(f"[call_subagent] Payload summary: agent={agent_id}, url={wait_url}, messages={len(task_messages)}")
     
     try:
         async with httpx.AsyncClient() as client:
