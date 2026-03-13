@@ -11,6 +11,7 @@
 """
 
 import ast
+import json
 import os
 import re
 import uuid
@@ -550,6 +551,60 @@ async def google_calendar_create(
 
 
 # ---------------------------------------------------------------------------
+# JSON 추출 도구
+# ---------------------------------------------------------------------------
+
+async def json_extract(data: Union[str, dict, list], path: str) -> dict[str, Any]:
+    """JSON 데이터에서 JSONPath 표현식으로 값을 추출합니다.
+
+    서브에이전트 응답처럼 크고 복잡한 JSON에서 필요한 필드만 뽑을 때 사용하세요.
+    LLM이 JSON 전체를 읽지 않아도 되므로 토큰 소모를 줄일 수 있습니다.
+
+    JSONPath 문법 예시:
+        "$.result.data.name"          → 단일 키 접근
+        "$.items[0].title"            → 배열 첫 번째 요소
+        "$.nodes[*].id"               → 모든 노드의 id 리스트
+        "$.edges[?(@.relation=='소속')].to"  → 조건 필터링
+
+    Args:
+        data: JSON 데이터. dict/list 또는 JSON 문자열.
+        path: JSONPath 표현식 ($ 로 시작, 예: "$.data.nodes[*].name").
+
+    Returns:
+        dict: {"path": path, "result": 추출된 값, "count": 결과 수}
+              오류 시 {"path": path, "error": 오류 메시지}
+    """
+    from jsonpath_ng.ext import parse as jsonpath_parse
+
+    # 문자열이면 JSON 파싱
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError as e:
+            return {"path": path, "error": f"JSON 파싱 실패: {e}"}
+
+    try:
+        expr = jsonpath_parse(path)
+        matches = expr.find(data)
+
+        if not matches:
+            hint = ""
+            if isinstance(data, dict):
+                hint = f"루트 키 목록: {list(data.keys())}"
+            elif isinstance(data, list):
+                hint = f"리스트 길이: {len(data)}"
+            return {"path": path, "result": None, "count": 0, "hint": hint or "매칭 결과 없음"}
+
+        values = [m.value for m in matches]
+        result = values[0] if len(values) == 1 else values
+
+        return {"path": path, "result": result, "count": len(values)}
+
+    except Exception as e:
+        return {"path": path, "error": f"JSONPath 오류: {str(e)}"}
+
+
+# ---------------------------------------------------------------------------
 # 도구 목록 정의 (Tool Registry)
 # ---------------------------------------------------------------------------
 
@@ -570,6 +625,8 @@ COMMON_TOOLS: list[Callable[..., Any]] = [
         # Document Analysis
         analyze_document,
         # Visualization
-        create_graph
+        create_graph,
+        # JSON 추출
+        json_extract,
     ] if tool is not None
 ]

@@ -57,6 +57,7 @@ dependencies = [
     "redis>=5.2.1",
     "langchain-community",
     "python-multipart>=0.0.9",
+    "jsonpath-ng>=1.8.0",
 ]
 
 [dependency-groups]

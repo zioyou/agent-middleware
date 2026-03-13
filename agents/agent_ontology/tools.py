@@ -1,5 +1,6 @@
 import json
 import hashlib
+import re
 import httpx
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -19,9 +20,11 @@ from src.agent_server.core.database import db_manager
 def _make_cache_key(agent_id: str, task_description: str, input_data: dict) -> str:
     """agent_id + task_description + input_data 조합으로 고유한 캐시 키를 생성합니다.
     task_description이 다르면 같은 agent라도 다른 캐시 엔트리로 분리됩니다.
+    task_description은 공백을 정규화하여 불필요한 캐시 미스를 방지합니다.
     """
+    normalized_task = re.sub(r"\s+", " ", task_description.strip())
     combined = json.dumps(
-        {"task": task_description, "input": input_data},
+        {"task": normalized_task, "input": input_data},
         sort_keys=True, ensure_ascii=False,
     ).encode()
     return f"{agent_id}:{hashlib.md5(combined).hexdigest()[:8]}"
@@ -107,14 +110,12 @@ async def call_subagent(
     task_description: str,
     config: RunnableConfig,
     state: Annotated[Any, InjectedState],
-    input_data: dict = {},
+    input_data: dict | None = None,
 ) -> dict:
     """
     Delegate a specific task to a remote sub-agent by its ID.
-    
-    IMPORTANT: Before calling this tool, call `get_cached_subagent_data` first to check if
-    the data is already available. Only call this if there's a cache miss.
-    
+    Cache lookup is handled automatically — no separate cache check needed.
+
     Args:
         agent_id: The exact ID of the target sub-agent (e.g., 'ingestion_search_agent').
         task_description: Natural language description of the current task to perform
@@ -122,6 +123,8 @@ async def call_subagent(
                           user message to the sub-agent.
         input_data: Optional JSON parameters for the sub-agent. Defaults to empty dict.
     """
+    if input_data is None:
+        input_data = {}
     # ── HUMAN-IN-THE-LOOP: 실행 전 사용자 승인 요청 ──────────────────────────
     # interrupt()는 LangGraph 체크포인트에 현재 상태를 저장하고 실행을 멈춥니다.
     # 사용자가 Command(resume={...})하면 이 함수가 다시 처음부터 실행되며,
@@ -239,7 +242,8 @@ async def call_subagent(
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(wait_url, json=payload, timeout=30.0)
+            timeout = float(os.getenv("SUBAGENT_TIMEOUT", "30.0"))
+            response = await client.post(wait_url, json=payload, timeout=timeout)
             response.raise_for_status()
             result = response.json()
             print(f"[call_subagent] Response received. Caching under key={cache_key}")

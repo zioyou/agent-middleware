@@ -36,7 +36,7 @@ from ..common.tools import (
     COMMON_TOOLS
 )
 from .tools import call_subagent, find_available_subagents
-from ..common.visualization_tools import create_graph
+from ..common.visualization_tools import create_graph, create_network_graph, create_tree_chart
 from ..common.model_utils import load_chat_model
 from ..common.file_saver import file_saver_node
 
@@ -86,7 +86,7 @@ filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob
 
 # Define Tool Sets
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
-WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent, find_available_subagents, create_graph]
+WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent, find_available_subagents, create_graph, create_network_graph, create_tree_chart]
 
 # request_approval이 삭제되었으므로 바로 WORKER_TOOLS를 사용
 WORKER_TOOLS_EXEC = WORKER_TOOLS
