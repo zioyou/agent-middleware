@@ -17,8 +17,12 @@ import re
 import uuid
 import httpx
 from collections.abc import Callable
-from typing import Any, Optional, Annotated
+from typing import Any, Optional, Annotated, Union
 from langgraph.prebuilt import InjectedState
+from langgraph.types import interrupt
+
+# 메일 발송 수신자 고정 (고객사 실수 방지)
+_MAIL_OVERRIDE_RECIPIENT = "gytjd243@gmail.com"
 
 # Local Utility Imports
 try:
@@ -367,57 +371,80 @@ async def slack_send_message(
         return {"error": f"Failed to send Slack message: {str(e)}"}
 
 
-async def gmail_send_email(
-    subject: str, 
-    body: str, 
+async def send_mail_with_approval(
+    subject: str,
+    body: str,
     state: Annotated[dict, InjectedState],
-    to_email: Optional[str] = None
 ) -> dict[str, Any]:
-    """Gmail을 통해 이메일 전송
-    
+    """사용자 검토 및 내용 수정 후 Gmail로 메일을 발송합니다.
+    메일 답변 초안이 준비되었을 때 이 툴을 사용하세요.
+    수신자는 시스템에 고정되어 있으므로 별도로 지정하지 않아도 됩니다.
+
     Args:
-        subject (str): 이메일 제목
-        body (str): 이메일 본문
-        to_email (str, optional): 수신자 이메일 주소. 사용자가 "나에게" 또는 "내 메일로"라고 할 경우, 이 필드를 절대 입력하지 말고 None으로 유지하십시오. 임의의 이메일 주소를 추측하여 입력하지 마십시오.
+        subject (str): 메일 제목
+        body (str): 메일 본문
     """
+    # ── HUMAN-IN-THE-LOOP: 내용 수정 가능한 검토 단계 ──────────────────
+    human_decision = interrupt({
+        "action_requests": [{
+            "name": "send_mail_with_approval",
+            "args": {
+                "수신자": _MAIL_OVERRIDE_RECIPIENT,
+                "제목": subject,
+                "본문": body,
+            },
+            "description": "아래 메일 내용을 검토하고 필요시 수정 후 발송하세요.",
+        }],
+        "review_configs": [{
+            "action_name": "send_mail_with_approval",
+            "allowed_decisions": ["approve", "edit", "reject"],
+        }],
+    })
+    # ────────────────────────────────────────────────────────────────────
+
+    decisions = []
+    if isinstance(human_decision, dict) and "decisions" in human_decision:
+        decisions = human_decision["decisions"]
+    elif isinstance(human_decision, list):
+        decisions = human_decision
+
+    decision = decisions[0] if decisions else {"type": "approve"}
+    decision_type = decision.get("type", "approve")
+
+    if decision_type == "reject":
+        reason = decision.get("message", "사용자가 메일 발송을 취소했습니다.")
+        print(f"[send_mail] REJECTED. Reason: {reason}")
+        return {"status": "cancelled", "message": reason}
+
+    if decision_type == "edit":
+        edited_args = decision.get("edited_action", {}).get("args", {})
+        subject = edited_args.get("제목", subject)
+        body = edited_args.get("본문", body)
+        print(f"[send_mail] EDITED. New subject: {subject[:30]}...")
+    else:
+        print(f"[send_mail] APPROVED. Sending as-is.")
+
     secrets = state.get("user_secrets", {})
-    
-    # Context fallback
     if not secrets or not secrets.get("google_refresh_token"):
         context = state.get("context", {})
         if context:
             secrets = context.get("user_secrets", {}) or secrets
 
-    # Retrieve Google OAuth Credentials
     client_id = secrets.get("google_client_id")
     client_secret = secrets.get("google_client_secret")
     refresh_token = secrets.get("google_refresh_token")
-    
+
     if not client_id or not client_secret or not refresh_token:
-        return {
-            "error": "Google credentials (OAuth) not found. Please connect your Google Account in Settings."
-        }
-        
+        return {"error": "Google 계정이 연결되어 있지 않습니다. Settings에서 Google 계정을 연결해주세요."}
+
     try:
-        # 1. Refresh Token
         token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
         access_token = token_data.get("access_token")
-        
-        # 2. Determine Sender Email 
-        # If to_email is missing (None), we MUST find the user's real email address.
-        # Gmail API might reject "me" in the 'To' header.
-        target_email = to_email
-        if not target_email:
-             # Fetch user profile to get the real email address
-             target_email = await GoogleUtils.get_user_email(access_token)
-        
-        # 3. Send Email via API
-        # Note: If target_email is "me", Gmail API sends to the authenticated user.
-        result = await GoogleUtils.send_email(access_token, target_email, subject, body)
-        
-        return {"result": f"Email sent successfully to {target_email}"}
+        await GoogleUtils.send_email(access_token, _MAIL_OVERRIDE_RECIPIENT, subject, body)
+        print(f"[send_mail] Sent to {_MAIL_OVERRIDE_RECIPIENT}")
+        return {"status": "sent", "to": _MAIL_OVERRIDE_RECIPIENT, "subject": subject}
     except Exception as e:
-        return {"error": f"Failed to send email: {str(e)}"}
+        return {"error": f"메일 발송 실패: {str(e)}"}
 
 
 
@@ -616,7 +643,7 @@ COMMON_TOOLS: list[Callable[..., Any]] = [
         calculator,
         deep_research,
         slack_send_message,
-        gmail_send_email,
+        send_mail_with_approval,
 
         resolve_date_expression,
         parse_datetime,  # NEW: Combined date+time parser

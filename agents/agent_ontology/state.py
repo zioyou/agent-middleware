@@ -18,6 +18,9 @@ class State(FilesystemState):
     task_results: dict[int, str]  # Storage for results of each task (index -> result text)
     final_answer: Optional[str]  # The final synthesized answer
     
+    # Last turn's final answer (persists across turns for Worker context)
+    last_turn_result: Optional[str]
+
     # Subagent Response Cache
     # Key: "{agent_id}:{input_md5[:8]}" / Value: {agent_id, input_data, response, cached_at}
     subagent_cache: dict[str, Any]

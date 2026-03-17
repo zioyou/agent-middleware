@@ -67,6 +67,52 @@ async def _get_cache_store():
         return None
 
 
+async def _get_or_create_remote_thread(store, local_thread_id: str, subagent_base_url: str) -> str:
+    """로컬 thread에 연결된 원격 서브에이전트 thread_id를 반환합니다.
+
+    Store에 기존 매핑이 있으면 재사용하고, 없으면 원격 서버에 thread를 새로 생성한 뒤
+    매핑을 저장합니다. 원격 생성 실패 시 local_thread_id를 fallback으로 사용합니다.
+    """
+    namespace = ("subagent_threads", local_thread_id)
+    url_key = hashlib.md5(subagent_base_url.encode()).hexdigest()
+
+    if store:
+        try:
+            cached = await store.aget(namespace, url_key)
+            if cached is not None:
+                remote_thread_id = cached.value.get("remote_thread_id")
+                if remote_thread_id:
+                    print(f"[call_subagent] Reusing remote thread_id={remote_thread_id} for {subagent_base_url}")
+                    return remote_thread_id
+        except Exception as e:
+            print(f"[call_subagent] Failed to lookup remote thread mapping: {e}")
+
+    # 원격 thread 신규 생성
+    remote_thread_id = local_thread_id  # fallback
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(f"{subagent_base_url}/threads", json={}, timeout=5.0)
+            if resp.status_code == 200:
+                remote_data = resp.json()
+                remote_thread_id = remote_data.get("thread_id", local_thread_id)
+                print(f"[call_subagent] Created remote thread_id={remote_thread_id} on {subagent_base_url}")
+    except Exception as e:
+        print(f"[call_subagent] Failed to create remote thread (fallback to local id): {e}")
+
+    # Store에 매핑 저장
+    if store:
+        try:
+            await store.aput(namespace, url_key, {
+                "remote_thread_id": remote_thread_id,
+                "subagent_base_url": subagent_base_url,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:
+            print(f"[call_subagent] Failed to store remote thread mapping (non-fatal): {e}")
+
+    return remote_thread_id
+
+
 # ============================================================
 # Tools
 # ============================================================
@@ -141,7 +187,7 @@ async def call_subagent(
         }],
         "review_configs": [{
             "action_name": "call_subagent",
-            "allowed_decisions": ["approve", "reject"],
+            "allowed_decisions": ["approve", "edit", "reject"],
         }],
     })
 
@@ -152,14 +198,22 @@ async def call_subagent(
     elif isinstance(human_decision, list):
         decisions = human_decision
 
-    if decisions:
-        decision_type = decisions[0].get("type", "approve")
-        if decision_type == "reject":
-            reject_msg = decisions[0].get("message", "사용자가 서브 에이전트 호출을 거부했습니다.")
-            print(f"[call_subagent] User REJECTED. Reason: {reject_msg}")
-            return {"status": "rejected", "message": reject_msg}
+    decision = decisions[0] if decisions else {"type": "approve"}
+    decision_type = decision.get("type", "approve")
 
-    print(f"[call_subagent] User APPROVED. Proceeding with execution.")
+    if decision_type == "reject":
+        reject_msg = decision.get("message", "사용자가 서브 에이전트 호출을 거부했습니다.")
+        print(f"[call_subagent] User REJECTED. Reason: {reject_msg}")
+        return {"status": "rejected", "message": reject_msg}
+
+    if decision_type == "edit":
+        edited_args = decision.get("edited_action", {}).get("args", {})
+        agent_id = edited_args.get("agent_id", agent_id)
+        task_description = edited_args.get("task_description", task_description)
+        input_data = edited_args.get("input_data", input_data)
+        print(f"[call_subagent] User EDITED. agent={agent_id}, task={task_description[:40]}...")
+    else:
+        print(f"[call_subagent] User APPROVED. Proceeding with execution.")
     # ─────────────────────────────────────────────────────────────────────────
 
     thread_id = config.get("configurable", {}).get("thread_id", "unknown_thread")
@@ -227,10 +281,13 @@ async def call_subagent(
             print(f"[ERROR] {error_msg}")
             return {"error": error_msg}
 
-    # 5. /runs/wait API 페이로드 구성
+    # 5. 원격 thread_id 조회 또는 Lazy 생성
+    remote_thread_id = await _get_or_create_remote_thread(store, thread_id, subagent_base_url)
+
+    # 6. /runs/wait API 페이로드 구성
     payload: dict = {
         "agent_id": agent_id,
-        "thread_id": thread_id,
+        "thread_id": remote_thread_id,
         "input": input_data,
         "messages": task_messages,
     }

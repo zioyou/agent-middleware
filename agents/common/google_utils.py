@@ -97,8 +97,8 @@ class GoogleUtils:
         """Gmail API를 사용하여 이메일을 전송합니다."""
         import base64
         from email.mime.text import MIMEText
-        
-        message = MIMEText(body)
+
+        message = MIMEText(body, "plain", "utf-8")
         message['to'] = to
         message['subject'] = subject
         

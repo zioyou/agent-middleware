@@ -75,7 +75,7 @@ WRITE_TODOS_TOOL = todo_middleware.tools[0]
 
 # Filesystem Middleware (Defaults to StateBackend for UI artifacts)
 fs_middleware = FilesystemMiddleware()
-# Filter out browsing tools - agent should use analyze_document instead
+# 임의 디스크 탐색 및 읽기 도구 제외 (파일 내용은 메시지에 직접 포함됨)
 filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob", "grep", "read_file", "execute"]]
 
 # Define Tool Sets
@@ -106,10 +106,9 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
         "todos": []
     }
     
-    # Clear existing files (if any)
+    # 이전 턴의 생성 파일(아티팩트) 초기화
     existing_files = state.get("files", {})
     if existing_files:
-        # Set all values to None to trigger deletion in reducer
         return_update["files"] = {k: None for k in existing_files.keys()}
     
     # 1. System Prompt

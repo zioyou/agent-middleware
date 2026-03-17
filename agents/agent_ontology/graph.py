@@ -8,6 +8,7 @@ Architecture:
 """
 
 import logging
+import re
 from typing import Any, Sequence, Union, Literal, Dict
 from datetime import datetime, timedelta
 
@@ -43,6 +44,15 @@ from ..common.file_saver import file_saver_node
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
+
+def _strip_llm_artifacts(text: str) -> str:
+    """Qwen 계열 로컬 LLM의 특수 토큰이 응답 텍스트에 노출될 경우 제거합니다.
+    예: <|channel|>, <|constrain|>, commentary to=functions? 등
+    """
+    text = re.sub(r"<\|[^|>]+\|>", "", text)          # <|channel|>, <|constrain|> 등
+    text = re.sub(r"commentary\s+to=\S+", "", text)    # commentary to=functions? 등
+    return text.strip()
+
 
 default_context = Context()
 
@@ -81,7 +91,7 @@ WRITE_TODOS_TOOL = todo_middleware.tools[0]
 
 # Filesystem Middleware (Defaults to StateBackend for UI artifacts)
 fs_middleware = FilesystemMiddleware()
-# Filter out browsing tools - agent should use analyze_document instead
+# 임의 디스크 탐색 및 읽기 도구 제외 (파일 내용은 메시지에 직접 포함됨)
 filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob", "grep", "read_file", "execute"]]
 
 # Define Tool Sets
@@ -115,10 +125,9 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
         "todos": []
     }
     
-    # Clear existing files (if any)
+    # 이전 턴의 생성 파일(아티팩트) 초기화
     existing_files = state.get("files", {})
     if existing_files:
-        # Set all values to None to trigger deletion in reducer
         return_update["files"] = {k: None for k in existing_files.keys()}
     
     # 1. System Prompt
@@ -153,7 +162,9 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
                 # Create a user-friendly task content description from the intercepted tool call
                 tool_name = tc.get("name", "unknown")
                 if tool_name in ["call_subagent", "find_available_subagents"]:
-                    task_content = "사내 시스템 데이터 수집 및 분석"
+                    # task_description 아규먼트가 있으면 그대로 활용
+                    task_desc = tc.get("args", {}).get("task_description", "")
+                    task_content = task_desc if task_desc else "사내 시스템 데이터 수집 및 분석"
                 elif tool_name in ["tavily_search"]:
                     query_arg = tc.get("args", {}).get("query", "")
                     task_content = f"웹 검색 진행: {query_arg}"
@@ -231,15 +242,13 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     
     react_history.reverse()
     
-    # Extract original user message for Worker context
+    # Extract original user message for Worker context (가장 최근 HumanMessage)
     original_user_message = "(No original user message found)"
-    for m in messages:
+    for m in reversed(messages):
         if isinstance(m, HumanMessage):
-            # Get text content from the message
             if isinstance(m.content, str):
                 original_user_message = m.content
             elif isinstance(m.content, list):
-                # Extract text blocks
                 text_parts = [block.get("text", "") for block in m.content if isinstance(block, dict) and block.get("type") == "text"]
                 original_user_message = " ".join(text_parts)
             break
@@ -248,11 +257,14 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     previous_results_str = "\n".join([f"Task {i+1}: {res}" for i, res in results.items()])
     if not previous_results_str:
         previous_results_str = "(None)"
-        
+
+    last_turn_result = state.get("last_turn_result") or "(None)"
+
     system_content = WORKER_PROMPT_TEMPLATE.format(
         task_description=current_task["content"],
-        original_user_message=original_user_message,  # NEW: Pass original message
-        previous_results=previous_results_str
+        original_user_message=original_user_message,
+        last_turn_result=last_turn_result,
+        previous_results=previous_results_str,
     )
     
     kst_now = datetime.now() + timedelta(hours=9)
@@ -270,6 +282,11 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     try:
         model_bound = model_instance.bind_tools(WORKER_TOOLS)
         response = await model_bound.ainvoke(input_messages, config)
+        # 로컬 LLM 특수 토큰 제거
+        if isinstance(response.content, str) and response.content:
+            cleaned = _strip_llm_artifacts(response.content)
+            if cleaned != response.content:
+                response = response.model_copy(update={"content": cleaned})
         return {"messages": [response]}
     except Exception as e:
         logger.error(f"[worker_node] Task {idx} 실행 실패: {e}", exc_info=True)
@@ -307,11 +324,15 @@ async def task_completer_node(state: State, config: RunnableConfig) -> dict:
     
     print(f"[Completer] Task {idx} finished. Moving to {next_idx}.")
     
-    return {
+    update: dict = {
         "todos": new_todos,
         "current_task_index": next_idx,
-        "task_results": new_results
+        "task_results": new_results,
     }
+    # 단일 태스크의 경우 Finalizer를 거치지 않고 END로 가므로 여기서 저장
+    if len(todos) == 1:
+        update["last_turn_result"] = result_text
+    return update
 
 async def finalizer_node(state: State, config: RunnableConfig) -> dict:
     """
@@ -341,7 +362,8 @@ async def finalizer_node(state: State, config: RunnableConfig) -> dict:
     
     return {
         "messages": [response],
-        "final_answer": response.content
+        "final_answer": response.content,
+        "last_turn_result": response.content,
     }
 
 # (human_approval_node 제거됨 - interrupt()가 call_subagent 도구 내부에서 직접 처리)

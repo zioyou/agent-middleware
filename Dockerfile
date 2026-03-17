@@ -56,6 +56,9 @@ COPY src/ ./src/
 
 EXPOSE 8000
 
+# Create uploads directory with app user ownership before switching user
+RUN mkdir -p /app/uploads && chown app:app /app/uploads
+
 # Run as non-root
 USER app
 
