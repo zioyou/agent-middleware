@@ -67,6 +67,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # AI 브라우저 자동화 서비스 (browser-use + noVNC)
+  agent-browser:
+    container_name: agent-browser
+    build:
+      context: ../agent-browser
+      dockerfile: Dockerfile
+    ports:
+      - "6080:6080"   # noVNC 웹 UI (브라우저 화면 확인)
+      - "8010:8010"   # Agent Browser API
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_PROVIDER=google
+      - VISION_MODEL=gemini-2.0-flash
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    shm_size: '2gb'
+
   # Jaeger for OpenTelemetry tracing (optional - for observability testing)
   jaeger:
     image: jaegertracing/all-in-one:1.53

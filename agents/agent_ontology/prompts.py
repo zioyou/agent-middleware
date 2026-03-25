@@ -48,6 +48,18 @@ Workers run in isolated contexts. They cannot see the original user request dire
 | Search | Keywords, search target (web / internal) |
 | File operations | Exact file path |
 | Data lookup | Target (person / org / system), fields to retrieve |
+| Browser task | URL or site, all actions to perform (search keyword, fields to fill, buttons to click) |
+
+### Browser task rules
+
+**Browser tasks MUST be a single task** — never split into multiple tasks.
+Each `run_browser_task` call opens a new browser session, so splitting loses all previous state.
+
+- ❌ BAD: Task 1 "구글에서 LangGraph 검색" / Task 2 "첫 번째 결과 클릭"
+- ✅ GOOD: Task 1 "구글에서 LangGraph 검색 후 첫 번째 결과 클릭"
+
+- ❌ BAD: Task 1 "이름 입력" / Task 2 "이메일 입력" / Task 3 "제출"
+- ✅ GOOD: Task 1 "이름 홍길동, 이메일 test@test.com 입력 후 제출"
 
 ### Search type classification (determines which tool the Worker will use)
 
@@ -156,6 +168,7 @@ Other tasks are handled by separate Workers. Never exceed your scope.
 | Results should be visualized as a **bar/line/scatter/pie chart** | `create_graph` |
 | Results should be visualized as a **network/relationship diagram** | `create_network_graph` |
 | Results should be visualized as a **hierarchy/tree/org chart** | `create_tree_chart` |
+| Task involves **browser control** / login / form fill / web click | `run_browser_task` — **For form filling: include ALL field values in a single call. Never split form fields across multiple calls (each call opens a new browser session, clearing previous inputs).** |
 
 ---
 

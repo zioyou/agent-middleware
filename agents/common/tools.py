@@ -11,6 +11,7 @@
 """
 
 import ast
+import asyncio
 import json
 import os
 import re
@@ -23,6 +24,14 @@ from langgraph.types import interrupt
 
 # 메일 발송 수신자 고정 (고객사 실수 방지)
 _MAIL_OVERRIDE_RECIPIENT = "gytjd243@gmail.com"
+
+
+def _get_user_secrets(state: dict) -> dict:
+    """state에서 user_secrets를 추출합니다. context 내부에도 폴백 탐색합니다."""
+    secrets = state.get("user_secrets") or {}
+    if not secrets:
+        secrets = (state.get("context") or {}).get("user_secrets") or {}
+    return secrets
 
 # Local Utility Imports
 try:
@@ -82,11 +91,11 @@ async def tavily_search(query: str) -> dict[str, Any]:
         return {"error": "tavily-python package not installed."}
 
     try:
-        from tavily import TavilyClient
-        client = TavilyClient(api_key=api_key)
-        
+        from tavily import AsyncTavilyClient
+        client = AsyncTavilyClient(api_key=api_key)
+
         # Tavily 검색 수행 (search_depth="advanced"로 심층 검색)
-        response = client.search(query, search_depth="advanced", max_results=5)
+        response = await client.search(query, search_depth="advanced", max_results=5)
         
         formatted_results = []
         for result in response.get("results", []):
@@ -337,14 +346,8 @@ async def slack_send_message(
     Args:
         text (str): 보낼 메시지 내용
     """
-    secrets = state.get("user_secrets", {})
-    
-    # Context fallback
-    if not secrets or not secrets.get("slack_webhook_url"):
-        context = state.get("context", {})
-        if context:
-            secrets = context.get("user_secrets", {}) or secrets
-            
+    secrets = _get_user_secrets(state)
+
     # 1. Check Environment Variable (Preferred for Public Bot)
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
     
@@ -424,12 +427,7 @@ async def send_mail_with_approval(
     else:
         print(f"[send_mail] APPROVED. Sending as-is.")
 
-    secrets = state.get("user_secrets", {})
-    if not secrets or not secrets.get("google_refresh_token"):
-        context = state.get("context", {})
-        if context:
-            secrets = context.get("user_secrets", {}) or secrets
-
+    secrets = _get_user_secrets(state)
     client_id = secrets.get("google_client_id")
     client_secret = secrets.get("google_client_secret")
     refresh_token = secrets.get("google_refresh_token")
@@ -448,6 +446,45 @@ async def send_mail_with_approval(
 
 
 
+
+
+async def run_browser_task(task: str) -> dict[str, Any]:
+    """웹 브라우저를 AI가 직접 제어하여 작업을 수행합니다.
+
+    로그인, 폼 작성, 버튼 클릭, 데이터 입력 등 실제 브라우저 조작이 필요한 작업에 사용하세요.
+    작업 진행 화면은 http://localhost:6080 에서 실시간으로 확인할 수 있습니다.
+
+    CRITICAL:
+    - 이 도구는 호출마다 새 브라우저 세션을 시작합니다.
+    - 동일 페이지에서의 작업(폼 입력, 순차 클릭 등)은 반드시 단 한 번의 호출로 처리하세요.
+    - 같은 페이지 작업을 여러 번 나눠서 호출하면 이전 입력이 모두 초기화됩니다.
+    - task에 입력해야 할 모든 값을 빠짐없이 포함하세요.
+
+    Args:
+        task: 브라우저로 수행할 작업 설명. 폼 작성 시 입력해야 할 모든 필드와 값을 포함합니다.
+    """
+    browser_service_url = os.getenv("BROWSER_SERVICE_URL", "http://agent-browser:8010")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{browser_service_url}/run",
+                json={"task": task},
+                timeout=120.0,
+            )
+            response.raise_for_status()
+            return response.json()
+    except asyncio.CancelledError:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"{browser_service_url}/cancel", timeout=5.0)
+        except Exception:
+            pass
+        raise
+    except httpx.TimeoutException:
+        return {"error": "브라우저 작업 시간 초과 (120초)"}
+    except Exception as e:
+        return {"error": f"브라우저 서비스 호출 실패: {str(e)}"}
 
 
 async def resolve_date_expression(
@@ -505,18 +542,14 @@ async def google_calendar_list(
     Args:
         max_results (int, optional): 조회할 최대 일정 개수 (기본값: 10)
     """
-    secrets = state.get("user_secrets", {})
-    context = state.get("context", {})
-    if not secrets and context:
-        secrets = context.get("user_secrets", {})
-        
+    secrets = _get_user_secrets(state)
     client_id = secrets.get("google_client_id")
     client_secret = secrets.get("google_client_secret")
     refresh_token = secrets.get("google_refresh_token")
-    
+
     if not client_id or not client_secret or not refresh_token:
         return {"error": "Google Calendar credentials not found. Please configure them in Settings."}
-        
+
     try:
         # 1. Refresh Token to get Access Token
         token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
@@ -553,18 +586,14 @@ async def google_calendar_create(
       - 12시: 정오 (12:00)
     - 애매한 경우, 일반적인 업무 시간(9시~18시)을 고려하여 판단
     """
-    secrets = state.get("user_secrets", {})
-    context = state.get("context", {})
-    if not secrets and context:
-        secrets = context.get("user_secrets", {})
-        
+    secrets = _get_user_secrets(state)
     client_id = secrets.get("google_client_id")
     client_secret = secrets.get("google_client_secret")
     refresh_token = secrets.get("google_refresh_token")
-    
+
     if not client_id or not client_secret or not refresh_token:
         return {"error": "Google Calendar credentials not found. Please configure them in Settings."}
-        
+
     try:
         # 1. Refresh Token
         token_data = await GoogleUtils.refresh_access_token(client_id, client_secret, refresh_token)
@@ -638,7 +667,8 @@ async def json_extract(data: Union[str, dict, list], path: str) -> dict[str, Any
 
 COMMON_TOOLS: list[Callable[..., Any]] = [
     tool for tool in [
-        tavily_search,
+        run_browser_task,
+        # tavily_search,  # 임시 비활성화 (브라우저 데모 테스트용)
         scrape_web_page,
         calculator,
         deep_research,

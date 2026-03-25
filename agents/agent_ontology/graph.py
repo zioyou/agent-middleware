@@ -98,8 +98,6 @@ filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
 WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent, find_available_subagents, create_graph, create_network_graph, create_tree_chart]
 
-# request_approval이 삭제되었으므로 바로 WORKER_TOOLS를 사용
-WORKER_TOOLS_EXEC = WORKER_TOOLS
 
 # ============================================================================
 # NODES
@@ -140,7 +138,7 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
     # Force planning if it's the first step
     # API requires 'none', 'auto', or 'required'. Since we only have one tool, 'required' forces it.
     
-    print(f"[DEBUG] Planner Start. Tools: {[t.name for t in PLANNER_TOOLS]}")
+    logger.debug(f"[planner] start. tools={[t.name for t in PLANNER_TOOLS]}")
     
     model_bound = model_instance.bind_tools(PLANNER_TOOLS, tool_choice="required")
     response = await model_bound.ainvoke([system_msg] + messages, config)
@@ -157,7 +155,7 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
                 safe_tool_calls.append(tc)
             else:
                 # Intercept!
-                print(f"[GUARDRAIL] Intercepted direct execution attempt: {tc['name']}")
+                logger.warning(f"[planner] guardrail intercepted: {tc['name']}")
                 
                 # Create a user-friendly task content description from the intercepted tool call
                 tool_name = tc.get("name", "unknown")
@@ -186,7 +184,7 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
         # Replace tool calls in the response
         response.tool_calls = safe_tool_calls
 
-    print(f"[DEBUG] Planner Response Tool Calls: {response.tool_calls}")
+    logger.debug(f"[planner] tool_calls={response.tool_calls}")
     
     return_update["messages"] = [response]
     
@@ -322,7 +320,7 @@ async def task_completer_node(state: State, config: RunnableConfig) -> dict:
     # Move to next task
     next_idx = idx + 1
     
-    print(f"[Completer] Task {idx} finished. Moving to {next_idx}.")
+    logger.debug(f"[completer] task {idx} finished. next={next_idx}")
     
     update: dict = {
         "todos": new_todos,
@@ -346,7 +344,11 @@ async def finalizer_node(state: State, config: RunnableConfig) -> dict:
     user_query = "Unknown"
     for m in reversed(messages):
         if isinstance(m, HumanMessage):
-            user_query = m.content
+            if isinstance(m.content, str):
+                user_query = m.content
+            elif isinstance(m.content, list):
+                text_parts = [block.get("text", "") for block in m.content if isinstance(block, dict) and block.get("type") == "text"]
+                user_query = " ".join(text_parts)
             break
             
     # Format results
@@ -444,7 +446,7 @@ builder.add_node("planner", planner_node)
 builder.add_node("planner_tools", ToolNode(PLANNER_TOOLS))
 builder.add_node("dispatcher", dispatcher_node)
 builder.add_node("worker", worker_node)
-builder.add_node("worker_tools", ToolNode(WORKER_TOOLS_EXEC))
+builder.add_node("worker_tools", ToolNode(WORKER_TOOLS))
 # (human_approval 노드 제거 - interrupt()는 call_subagent 도구 내부에서 처리)
 builder.add_node("task_completer", task_completer_node)
 builder.add_node("finalizer", finalizer_node)
