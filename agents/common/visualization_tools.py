@@ -119,39 +119,85 @@ async def create_graph(
 
         if df is None or df.empty:
             return {"error": "데이터가 비어 있습니다."}
+
+        # 컬럼명 정규화: LLM이 한자/이형 유니코드로 키를 재생성하는 경우 방어
+        # 모든 행의 키를 통합하여 빈도 기반으로 대표 컬럼명 결정
+        if isinstance(data, list):
+            from collections import Counter
+            x_candidates = Counter(str(row.get(x_col, "")) for row in data if x_col in row)
+            y_candidates = Counter(str(row.get(y_col, "")) for row in data if y_col in row)
+            # 각 행에서 가장 많이 쓰인 값이 올바른 데이터이므로 df 재구성
+            if x_col not in df.columns or df[x_col].isna().any():
+                # 모든 row의 첫 번째 키를 x_col로, 두 번째 키를 y_col로 재매핑 시도
+                try:
+                    keys_per_row = [list(row.keys()) for row in data if isinstance(row, dict) and len(row) >= 2]
+                    if keys_per_row:
+                        first_keys = Counter(r[0] for r in keys_per_row)
+                        second_keys = Counter(r[1] for r in keys_per_row)
+                        best_x = first_keys.most_common(1)[0][0]
+                        best_y = second_keys.most_common(1)[0][0]
+                        if best_x != x_col or best_y != y_col:
+                            print(f"[create_graph] 컬럼 재매핑: '{x_col}'→'{best_x}', '{y_col}'→'{best_y}'")
+                            df = df.rename(columns={best_x: x_col, best_y: y_col})
+                except Exception:
+                    pass
+
         if x_col not in df.columns:
             return {"error": f"컬럼 '{x_col}' 없음. 사용 가능: {list(df.columns)}"}
         if plot_type != 'pie' and y_col not in df.columns:
             return {"error": f"컬럼 '{y_col}' 없음. 사용 가능: {list(df.columns)}"}
 
+        # NaN 행 제거
+        cols_to_check = [x_col] if plot_type == 'pie' else [x_col, y_col]
+        df = df.dropna(subset=cols_to_check)
+        if df.empty:
+            return {"error": "유효한 데이터가 없습니다."}
+
         # 2. 색상 팔레트
         colors = PALETTES.get(color_palette, PALETTES["mixed"])
 
         # 3. 그래프 생성
-        fig, ax = plt.subplots(figsize=(11, 6))
+        fig, ax = plt.subplots(figsize=(8, 4.5))
         _apply_modern_style(fig, ax)
 
         n = len(df)
         bar_colors = [colors[i % len(colors)] for i in range(n)]
 
+        # x축 레이블 자동 회전: 항목이 많거나 레이블이 길면 기울임
+        x_labels = [str(v) for v in df[x_col]]
+        _auto_rotate = n > 7 or max((len(s) for s in x_labels), default=0) > 5
+        _x_rotation = 35 if _auto_rotate else 0
+        _x_ha = 'right' if _auto_rotate else 'center'
+
         if plot_type == 'bar':
-            bars = ax.bar(df[x_col], df[y_col], color=bar_colors,
+            x_pos = range(n)
+            bars = ax.bar(x_pos, df[y_col], color=bar_colors,
                           edgecolor='none', zorder=3, width=0.6)
-            # 값 라벨
+            ax.set_xticks(list(x_pos))
+            ax.set_xticklabels(x_labels)
+            # 값 라벨: y축 범위 기준으로 오프셋 계산
+            y_range = df[y_col].max() - df[y_col].min() if len(df[y_col]) > 1 else df[y_col].max()
+            offset = y_range * 0.02 if y_range > 0 else 0.05
             for bar in bars:
                 h = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width() / 2, h + 0.05,
+                ax.text(bar.get_x() + bar.get_width() / 2, h + offset,
                         f'{h:,.0f}', ha='center', va='bottom',
                         color='#e0e0f0', fontsize=9)
 
         elif plot_type == 'line':
-            ax.plot(df[x_col], df[y_col], color=colors[0],
+            x_pos = range(n)
+            ax.plot(x_pos, df[y_col], color=colors[0],
                     marker='o', markersize=7, linewidth=2.5,
                     markerfacecolor='white', markeredgewidth=2, zorder=3)
-            ax.fill_between(range(len(df)), df[y_col],
-                            alpha=0.15, color=colors[0])
-            ax.set_xticks(range(len(df)))
-            ax.set_xticklabels(df[x_col])
+            ax.fill_between(x_pos, df[y_col], alpha=0.15, color=colors[0])
+            ax.set_xticks(list(x_pos))
+            ax.set_xticklabels(x_labels)
+            # 각 포인트에 수치 라벨
+            y_range = df[y_col].max() - df[y_col].min() if len(df[y_col]) > 1 else df[y_col].max()
+            offset = y_range * 0.04 if y_range > 0 else 0.05
+            for i, val in enumerate(df[y_col]):
+                ax.text(i, val + offset, f'{val:,.0f}', ha='center', va='bottom',
+                        color='#e0e0f0', fontsize=9)
 
         elif plot_type == 'scatter':
             scatter_colors = [colors[i % len(colors)] for i in range(n)]
@@ -177,7 +223,13 @@ async def create_graph(
         if plot_type != 'pie':
             ax.set_xlabel(x_label or x_col, labelpad=8, fontsize=11)
             ax.set_ylabel(y_label or y_col, labelpad=8, fontsize=11)
-            plt.xticks(rotation=0, ha='center')
+            if plot_type not in ('bar', 'line'):
+                plt.xticks(rotation=_x_rotation, ha=_x_ha)
+            else:
+                ax.tick_params(axis='x', rotation=_x_rotation)
+                if _auto_rotate:
+                    for tick in ax.get_xticklabels():
+                        tick.set_ha('right')
 
         plt.tight_layout(pad=2.0)
 

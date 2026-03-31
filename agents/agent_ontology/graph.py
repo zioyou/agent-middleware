@@ -45,6 +45,37 @@ from ..common.file_saver import file_saver_node
 # INITIALIZATION
 # ============================================================================
 
+def _extract_user_message(messages: list) -> str:
+    """메시지 목록에서 가장 최근 HumanMessage 텍스트를 추출합니다."""
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            if isinstance(m.content, str):
+                return m.content
+            elif isinstance(m.content, list):
+                parts = [b.get("text", "") for b in m.content if isinstance(b, dict) and b.get("type") == "text"]
+                return " ".join(parts)
+    return ""
+
+
+def _append_session_context(state: State, assistant_response: str) -> list[dict]:
+    """현재 턴을 session_context에 추가하고 최대 5턴만 유지합니다."""
+    current = list(state.get("session_context") or [])
+    user_msg = _extract_user_message(state["messages"])
+    current.append({"user": user_msg, "assistant": assistant_response})
+    return current[-5:]
+
+
+def _format_session_context(session_context: list[dict]) -> str:
+    """Worker 프롬프트용 session_context 포맷."""
+    if not session_context:
+        return "(없음)"
+    parts = []
+    for i, turn in enumerate(reversed(session_context)):
+        label = f"[{i + 1}턴 전]"
+        parts.append(f"{label}\n사용자: {turn['user']}\n에이전트: {turn['assistant']}")
+    return "\n\n".join(parts)
+
+
 def _strip_llm_artifacts(text: str) -> str:
     """Qwen 계열 로컬 LLM의 특수 토큰이 응답 텍스트에 노출될 경우 제거합니다.
     예: <|channel|>, <|constrain|>, commentary to=functions? 등
@@ -257,11 +288,13 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
         previous_results_str = "(None)"
 
     last_turn_result = state.get("last_turn_result") or "(None)"
+    session_context_str = _format_session_context(state.get("session_context") or [])
 
     system_content = WORKER_PROMPT_TEMPLATE.format(
         task_description=current_task["content"],
         original_user_message=original_user_message,
         last_turn_result=last_turn_result,
+        session_context=session_context_str,
         previous_results=previous_results_str,
     )
     
@@ -330,6 +363,7 @@ async def task_completer_node(state: State, config: RunnableConfig) -> dict:
     # 단일 태스크의 경우 Finalizer를 거치지 않고 END로 가므로 여기서 저장
     if len(todos) == 1:
         update["last_turn_result"] = result_text
+        update["session_context"] = _append_session_context(state, result_text)
     return update
 
 async def finalizer_node(state: State, config: RunnableConfig) -> dict:
@@ -366,6 +400,7 @@ async def finalizer_node(state: State, config: RunnableConfig) -> dict:
         "messages": [response],
         "final_answer": response.content,
         "last_turn_result": response.content,
+        "session_context": _append_session_context(state, response.content),
     }
 
 # (human_approval_node 제거됨 - interrupt()가 call_subagent 도구 내부에서 직접 처리)

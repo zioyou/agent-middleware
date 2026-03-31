@@ -21,6 +21,11 @@ class State(FilesystemState):
     # Last turn's final answer (persists across turns for Worker context)
     last_turn_result: Optional[str]
 
+    # Recent conversation history (last 5 turns)
+    # Each entry: {"user": <raw user message>, "assistant": <final assistant response>}
+    # Raw data is stored verbatim — never summarized or modified.
+    session_context: list[dict]
+
     # Subagent Response Cache
     # Key: "{agent_id}:{input_md5[:8]}" / Value: {agent_id, input_data, response, cached_at}
     subagent_cache: dict[str, Any]

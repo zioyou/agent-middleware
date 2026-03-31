@@ -19,6 +19,7 @@ import uuid
 import httpx
 from collections.abc import Callable
 from typing import Any, Optional, Annotated, Union
+from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import InjectedState
 from langgraph.types import interrupt
 
@@ -448,14 +449,40 @@ async def send_mail_with_approval(
 
 
 
-async def run_browser_task(task: str) -> dict[str, Any]:
+def _inject_credentials(task: str) -> str:
+    """task에 URL이 있으면 환경변수에 등록된 계정 정보를 자동으로 앞에 주입."""
+    _SITE_CREDENTIALS = [
+        {
+            "domains": ["dev.zioyou.com"],
+            "id_env": "DEMO_DEV_ID",
+            "pw_env": "DEMO_DEV_PW",
+        },
+        {
+            "domains": ["wiki.zio.run"],
+            "id_env": "DEMO_WIKI_ID",
+            "pw_env": "DEMO_WIKI_PW",
+        },
+    ]
+    for site in _SITE_CREDENTIALS:
+        if any(domain in task for domain in site["domains"]):
+            user_id = os.getenv(site["id_env"], "")
+            password = os.getenv(site["pw_env"], "")
+            if user_id and password:
+                cred_hint = f"[Login credentials] ID: {user_id} / Password: {password}\n"
+                if cred_hint not in task:
+                    task = cred_hint + task
+            break
+    return task
+
+
+async def run_browser_task(task: str, config: RunnableConfig) -> dict[str, Any]:
     """웹 브라우저를 AI가 직접 제어하여 작업을 수행합니다.
 
     로그인, 폼 작성, 버튼 클릭, 데이터 입력 등 실제 브라우저 조작이 필요한 작업에 사용하세요.
-    작업 진행 화면은 http://localhost:6080 에서 실시간으로 확인할 수 있습니다.
+    작업 진행 화면은 브라우저 모니터 버튼을 통해 실시간으로 확인할 수 있습니다.
 
     CRITICAL:
-    - 이 도구는 호출마다 새 브라우저 세션을 시작합니다.
+    - 이 도구는 thread당 브라우저 세션을 유지합니다 (5분 미사용 시 자동 종료).
     - 동일 페이지에서의 작업(폼 입력, 순차 클릭 등)은 반드시 단 한 번의 호출로 처리하세요.
     - 같은 페이지 작업을 여러 번 나눠서 호출하면 이전 입력이 모두 초기화됩니다.
     - task에 입력해야 할 모든 값을 빠짐없이 포함하세요.
@@ -463,28 +490,40 @@ async def run_browser_task(task: str) -> dict[str, Any]:
     Args:
         task: 브라우저로 수행할 작업 설명. 폼 작성 시 입력해야 할 모든 필드와 값을 포함합니다.
     """
-    browser_service_url = os.getenv("BROWSER_SERVICE_URL", "http://agent-browser:8010")
+    from agent_server.browser_manager import browser_manager
+
+    task = _inject_credentials(task)
+    thread_id: str = (config.get("configurable") or {}).get("thread_id") or "default"
+
+    try:
+        session = await browser_manager.get_or_create_session(thread_id)
+    except RuntimeError as e:
+        return {"error": str(e)}
+    except TimeoutError as e:
+        return {"error": str(e)}
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{browser_service_url}/run",
+                f"{session.api_url}/run",
                 json={"task": task},
-                timeout=120.0,
+                timeout=300.0,
             )
             response.raise_for_status()
             return response.json()
     except asyncio.CancelledError:
         try:
             async with httpx.AsyncClient() as client:
-                await client.post(f"{browser_service_url}/cancel", timeout=5.0)
+                await client.post(f"{session.api_url}/cancel", timeout=5.0)
         except Exception:
             pass
         raise
     except httpx.TimeoutException:
-        return {"error": "브라우저 작업 시간 초과 (120초)"}
+        return {"error": "브라우저 작업 시간 초과 (300초)"}
     except Exception as e:
         return {"error": f"브라우저 서비스 호출 실패: {str(e)}"}
+    finally:
+        browser_manager.schedule_cleanup(thread_id)
 
 
 async def resolve_date_expression(

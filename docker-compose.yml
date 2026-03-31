@@ -27,6 +27,8 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
+    env_file:
+      - ./.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://user:password@postgres:5432/open_langgraph
       - REDIS_URL=redis://redis:6379/0
@@ -34,6 +36,12 @@ services:
       - DEBUG=true
       - PORT=${PORT:-8000}
       - RATE_LIMIT_ENABLED=false
+      - BROWSER_DOCKER_NETWORK=agent-middleware_default
+      - BROWSER_IMAGE=agent-browser:latest
+      - TRAEFIK_VNC_PORT=6080
+
+    group_add:
+      - "1001"  # 호스트 docker group GID — docker.sock 접근 권한
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +54,7 @@ services:
       - ./auth.py:/app/auth.py:ro
       - ./.env:/app/.env:ro
       - ./alembic:/app/alembic:ro # for migrations
+      - /var/run/docker.sock:/var/run/docker.sock  # Browser Manager: 동적 컨테이너 제어
     command: >
       sh -c "
         echo 'Running database migrations...' &&
@@ -67,23 +76,32 @@ services:
       timeout: 5s
       retries: 5
 
-  # AI 브라우저 자동화 서비스 (browser-use + noVNC)
+  # Traefik — 브라우저 세션별 noVNC 역방향 프록시
+  # session-{safe_id}.localhost:6080 → 해당 agent-browser 컨테이너:6080
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=agent-middleware_default"
+      - "--entrypoints.vnc.address=:6080"
+    ports:
+      - "6080:6080"   # noVNC 진입점 (세션별 서브도메인으로 라우팅)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # AI 브라우저 자동화 이미지 빌드 전용
+  # 실행은 browser_manager.py가 thread_id 기준으로 동적 생성/삭제
+  # 이미지 빌드: docker compose build agent-browser
   agent-browser:
-    container_name: agent-browser
     build:
       context: ../agent-browser
       dockerfile: Dockerfile
-    ports:
-      - "6080:6080"   # noVNC 웹 UI (브라우저 화면 확인)
-      - "8010:8010"   # Agent Browser API
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - LLM_PROVIDER=google
-      - VISION_MODEL=gemini-2.0-flash
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    shm_size: '2gb'
+    image: agent-browser:latest
+    profiles:
+      - browser-static  # 기본 docker compose up 에서 제외
 
   # Jaeger for OpenTelemetry tracing (optional - for observability testing)
   jaeger:

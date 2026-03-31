@@ -81,6 +81,7 @@ from .api.assistants import router as assistants_router
 from .api.external_sources import router as external_sources_router
 from .api.model_health import router as model_health_router
 from .api.audit import router as audit_router
+from .api.browser import router as browser_router
 from .api.crons import router as crons_router
 from .api.feature_flags import router as feature_flags_router
 from .api.organizations import router as organizations_router
@@ -403,6 +404,9 @@ app.include_router(store_router, prefix="", tags=["Store"])
 # /crons - 스케줄된 실행(Cron) 관리
 # 정기적인 에이전트 실행을 위한 스케줄링 기능
 app.include_router(crons_router, prefix="", tags=["Crons"])
+
+# /browser/session/{thread_id}/ready - 브라우저 컨테이너 준비 상태
+app.include_router(browser_router, prefix="", tags=["Browser"])
 
 # /organizations - 조직 기반 멀티테넌시 관리
 # 조직 CRUD, 멤버십 관리, API 키 관리
