@@ -52,5 +52,6 @@ def get_lmstudio_model(model: str, **kwargs) -> BaseChatModel:
         model=model,
         base_url=base_url,
         api_key="not-needed",  # LM Studio는 API 키 불필요
+        streaming=True,        # 토큰 단위 스트리밍 활성화 (LangGraph messages 모드 연동)
         **kwargs
     )
