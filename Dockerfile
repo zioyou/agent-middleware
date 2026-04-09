@@ -34,7 +34,8 @@ RUN python -m pip install --upgrade pip && \
 # -----------------------------
 FROM base AS final
 
-# Install only minimal runtime libs (psycopg[binary] used, so libpq not required at runtime)
+# Install minimal runtime libs
+# Node.js 비활성화 중 (MCP 사용 시 추가: curl + nodesource Node.js 22)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

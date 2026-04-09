@@ -231,6 +231,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: C901
     except Exception as e:
         logger.warning("Failed to ensure audit log partitions: %s", e)
 
+    # MCP 서버 연결 초기화 (현재 비활성화 — 연결할 서버 없음)
+    # 활성화 방법: 아래 주석 해제 + Dockerfile에 Node.js 추가 + langchain-mcp-adapters 의존성 추가
+    # try:
+    #     from agents.common.mcp_tools import init_mcp
+    #     await init_mcp()
+    # except Exception as e:
+    #     logger.warning("MCP 초기화 실패 (무시): %s", e)
+
     yield
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -268,6 +276,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  # noqa: C901
 
     # 데이터베이스 연결 종료
     await db_manager.close()
+
+    # MCP 서버 연결 종료 (현재 비활성화)
+    # try:
+    #     from agents.common.mcp_tools import cleanup_mcp
+    #     await cleanup_mcp()
+    # except Exception as e:
+    #     logger.warning("MCP 종료 실패 (무시): %s", e)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

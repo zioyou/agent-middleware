@@ -40,6 +40,7 @@ from .tools import call_subagent, find_available_subagents
 from ..common.visualization_tools import create_graph, create_network_graph, create_tree_chart
 from ..common.model_utils import load_chat_model
 from ..common.file_saver import file_saver_node
+from ..common.mcp_tools import get_mcp_tools
 
 # ============================================================================
 # INITIALIZATION
@@ -85,6 +86,50 @@ def _strip_llm_artifacts(text: str) -> str:
     return text.strip()
 
 
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
+# Worker가 단일 태스크 내에서 연속으로 tool을 호출할 수 있는 최대 횟수
+# 초과 시 강제로 task_completer로 라우팅 (무한 루프 방지)
+WORKER_MAX_TURNS = 30
+
+# 접근을 차단할 민감한 경로 패턴 (OpenHarness 보안 정책 참고)
+SENSITIVE_PATH_PATTERNS = [
+    "/.ssh/", "/.aws/", "/.gnupg/", "/.kube/", "/.azure/", "/.docker/",
+    "credentials", "/.config/gcloud", ".pem", ".key", ".secret", "id_rsa",
+]
+
+
+def _check_sensitive_paths(tool_calls: list) -> list[tuple[str, str, str]]:
+    """tool_calls에서 민감한 경로 접근 시도를 감지합니다.
+
+    read_file, glob, grep, write_file, edit_file 모두 경로 검사 대상.
+
+    Returns:
+        차단된 (tool_name, path, matched_pattern) 튜플 목록
+    """
+    blocked = []
+    for tc in tool_calls:
+        args = tc.get("args", {})
+        # 도구별 경로 파라미터명 통합 수집
+        path_candidates = [
+            args.get("path") or "",
+            args.get("file_path") or "",
+            args.get("filename") or "",
+            args.get("pattern") or "",  # glob의 pattern
+            args.get("directory") or "",  # glob의 directory
+        ]
+        path = " ".join(str(p) for p in path_candidates if p)
+        if not path:
+            continue
+        for pattern in SENSITIVE_PATH_PATTERNS:
+            if pattern in path.lower():
+                blocked.append((tc.get("name", "unknown"), path.strip(), pattern))
+                break
+    return blocked
+
+
 default_context = Context()
 
 # Load Model
@@ -122,12 +167,26 @@ WRITE_TODOS_TOOL = todo_middleware.tools[0]
 
 # Filesystem Middleware (Defaults to StateBackend for UI artifacts)
 fs_middleware = FilesystemMiddleware()
-# 임의 디스크 탐색 및 읽기 도구 제외 (파일 내용은 메시지에 직접 포함됨)
-filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "glob", "grep", "read_file", "execute"]]
+# ls: 디렉토리 나열 (불필요) / execute: 임의 셸 실행 (보안 위험)
+# glob, grep, read_file은 민감 경로 차단 guardrail이 있으므로 허용
+filesystem_tools = [t for t in fs_middleware.tools if t.name not in ["ls", "execute"]]
 
 # Define Tool Sets
 PLANNER_TOOLS = [WRITE_TODOS_TOOL]
 WORKER_TOOLS = COMMON_TOOLS + filesystem_tools + [call_subagent, find_available_subagents, create_graph, create_network_graph, create_tree_chart]
+
+# Worker ToolNode: WORKER_TOOLS로 생성하여 LangGraph가 도구 목록 인식 가능
+# MCP 도구는 런타임에 tools_by_name 딕셔너리에 동적으로 추가됨
+worker_tool_node = ToolNode(WORKER_TOOLS)
+
+
+def inject_mcp_tools_into_node() -> None:
+    """MCP 도구를 worker_tool_node에 주입합니다. lifespan에서 MCP 초기화 완료 후 호출됩니다."""
+    for tool in get_mcp_tools():
+        if tool.name not in worker_tool_node.tools_by_name:
+            worker_tool_node.tools_by_name[tool.name] = tool
+    if get_mcp_tools():
+        print(f"[worker_tool_node] MCP 도구 {len(get_mcp_tools())}개 주입 완료", flush=True)
 
 
 # ============================================================================
@@ -242,9 +301,20 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     idx = state.get("current_task_index", 0)
     results = state.get("task_results", {})
     messages = state["messages"]
-    
+    worker_turn_count = state.get("worker_turn_count", 0)
+
     if idx >= len(todos):
-        return {} 
+        return {}
+
+    # ── MAX TURNS GUARDRAIL ──────────────────────────────────────────────────
+    # Worker가 단일 태스크 내에서 너무 많은 tool 호출을 반복할 경우 강제 종료
+    if worker_turn_count >= WORKER_MAX_TURNS:
+        logger.warning(f"[worker] task {idx} max turns ({WORKER_MAX_TURNS}) reached. forcing completion.")
+        return {
+            "messages": [AIMessage(content=f"[태스크 강제 완료] 최대 실행 횟수({WORKER_MAX_TURNS}회)에 도달하여 태스크를 종료합니다.")],
+            "worker_turn_count": 0,
+        }
+    # ────────────────────────────────────────────────────────────────────────
         
     current_task = todos[idx]
     
@@ -300,25 +370,48 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     
     kst_now = datetime.now() + timedelta(hours=9)
     current_date = kst_now.strftime("%Y-%m-%d %A %H:%M:%S")
-    system_content = f"### [SYSTEM TIME]\nCurrent Time (KST): {current_date}\n\n" + system_content
+    # Task 진행 상황 주입 (Worker가 전체 맥락 파악 가능)
+    task_progress = f"현재 태스크: {idx + 1} / {len(todos)} | 이번 태스크 내 누적 실행 횟수: {worker_turn_count + 1} / {WORKER_MAX_TURNS}"
+    system_content = (
+        f"### [SYSTEM TIME]\nCurrent Time (KST): {current_date}\n\n"
+        f"### [TASK PROGRESS]\n{task_progress}\n\n"
+    ) + system_content
     system_msg = SystemMessage(content=system_content)
-    
+
     # 3. Construct Input Messages
     # System Instruction + Trigger Message + ReAct History
     trigger_msg = HumanMessage(content=f"Execute this task now: {current_task['content']}")
-    
+
     input_messages = [system_msg, trigger_msg] + react_history
-    
-    # 4. Invoke Model
+
+    # 4. Invoke Model (MCP 도구를 동적으로 합산하여 바인딩)
     try:
-        model_bound = model_instance.bind_tools(WORKER_TOOLS)
+        mcp_tools = get_mcp_tools()
+        all_worker_tools = WORKER_TOOLS + mcp_tools
+        model_bound = model_instance.bind_tools(all_worker_tools)
         response = await model_bound.ainvoke(input_messages, config)
         # 로컬 LLM 특수 토큰 제거
         if isinstance(response.content, str) and response.content:
             cleaned = _strip_llm_artifacts(response.content)
             if cleaned != response.content:
                 response = response.model_copy(update={"content": cleaned})
-        return {"messages": [response]}
+
+        # ── SENSITIVE PATH GUARDRAIL ─────────────────────────────────────────
+        if response.tool_calls:
+            blocked = _check_sensitive_paths(response.tool_calls)
+            if blocked:
+                blocked_msg = "\n".join(
+                    f"- {name}({path}): '{pattern}' 패턴으로 차단"
+                    for name, path, pattern in blocked
+                )
+                logger.warning(f"[worker] sensitive path blocked:\n{blocked_msg}")
+                return {
+                    "messages": [AIMessage(content=f"보안 정책: 민감한 경로에 대한 접근이 차단되었습니다.\n{blocked_msg}")],
+                    "worker_turn_count": 0,
+                }
+        # ────────────────────────────────────────────────────────────────────
+
+        return {"messages": [response], "worker_turn_count": worker_turn_count + 1}
     except Exception as e:
         logger.error(f"[worker_node] Task {idx} 실행 실패: {e}", exc_info=True)
         new_todos = [t.copy() for t in todos]
@@ -326,6 +419,7 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
         return {
             "messages": [AIMessage(content=f"태스크 실행 중 오류가 발생했습니다: {str(e)}")],
             "todos": new_todos,
+            "worker_turn_count": 0,
         }
 
 async def task_completer_node(state: State, config: RunnableConfig) -> dict:
@@ -353,12 +447,13 @@ async def task_completer_node(state: State, config: RunnableConfig) -> dict:
     # Move to next task
     next_idx = idx + 1
     
-    logger.debug(f"[completer] task {idx} finished. next={next_idx}")
-    
+    logger.info(f"[completer] task {idx} finished (result len={len(result_text)}). next={next_idx}")
+
     update: dict = {
         "todos": new_todos,
         "current_task_index": next_idx,
         "task_results": new_results,
+        "worker_turn_count": 0,  # 다음 태스크를 위해 turn count reset
     }
     # 단일 태스크의 경우 Finalizer를 거치지 않고 END로 가므로 여기서 저장
     if len(todos) == 1:
@@ -481,7 +576,7 @@ builder.add_node("planner", planner_node)
 builder.add_node("planner_tools", ToolNode(PLANNER_TOOLS))
 builder.add_node("dispatcher", dispatcher_node)
 builder.add_node("worker", worker_node)
-builder.add_node("worker_tools", ToolNode(WORKER_TOOLS))
+builder.add_node("worker_tools", worker_tool_node)
 # (human_approval 노드 제거 - interrupt()는 call_subagent 도구 내부에서 처리)
 builder.add_node("task_completer", task_completer_node)
 builder.add_node("finalizer", finalizer_node)

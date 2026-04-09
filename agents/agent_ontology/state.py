@@ -26,6 +26,9 @@ class State(FilesystemState):
     # Raw data is stored verbatim — never summarized or modified.
     session_context: list[dict]
 
+    # Worker 루프 내 연속 실행 횟수 (무한 루프 방지용)
+    worker_turn_count: int
+
     # Subagent Response Cache
     # Key: "{agent_id}:{input_md5[:8]}" / Value: {agent_id, input_data, response, cached_at}
     subagent_cache: dict[str, Any]
