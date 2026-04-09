@@ -79,7 +79,7 @@ serializer = GeneralSerializer()
 active_runs: dict[str, asyncio.Task] = {}
 
 # 백그라운드 실행에 사용되는 기본 스트림 모드
-DEFAULT_STREAM_MODES: list[StreamMode] = ["values"]
+DEFAULT_STREAM_MODES: list[StreamMode] = ["values", "messages"]
 
 
 def _build_run_access_filter(

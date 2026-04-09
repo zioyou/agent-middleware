@@ -1,7 +1,7 @@
-from typing import Annotated, TypedDict, Optional, Any
+from typing import Annotated, TypedDict, Optional, Any, NotRequired
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from deepagents.middleware.filesystem import FilesystemState
+from deepagents.middleware.filesystem import FilesystemState, FileData
 
 class State(FilesystemState):
     """
@@ -43,3 +43,22 @@ class InputState(TypedDict):
     messages: list[BaseMessage]
     user_secrets: Optional[dict[str, str]]
     context: Optional[dict[str, Any]]
+
+
+class OutputState(TypedDict):
+    """SSE values 이벤트로 클라이언트에 전송되는 필드만 정의.
+
+    제외 필드:
+    - subagent_cache: 서브에이전트 응답 원본 (매우 클 수 있음)
+    - user_secrets: 민감정보
+    - session_context: 내부용 대화 이력 (프론트 불필요)
+    - task_results: 내부용 태스크 결과 (프론트 미사용)
+    - last_turn_result: 내부용 (프론트 미사용)
+    - worker_turn_count: 내부용 카운터
+    - context: 내부용
+    """
+    messages: list[BaseMessage]
+    todos: list[dict]
+    files: NotRequired[dict[str, FileData]]
+    current_task_index: int
+    final_answer: NotRequired[Optional[str]]
