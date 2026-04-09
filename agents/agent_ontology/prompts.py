@@ -187,6 +187,14 @@ Other tasks are handled by separate Workers. Never exceed your scope.
 
 ---
 
+## Available Sub-Agents
+
+The following sub-agents are currently connected. Use these agent_ids directly with `call_subagent` — no need to call `find_available_subagents` first.
+
+{available_subagents}
+
+---
+
 ## Tool Selection Guide
 
 ### Step 0: Check existing data FIRST (highest priority)
@@ -231,13 +239,14 @@ Use ONLY for internal company data / ontology queries.
 
 ```
 1. Check [PREVIOUS TASK RESULTS] → if data already exists, SKIP
-2. Call find_available_subagents() → get list of available agents
-3. Select the appropriate agent_id and review its supported_tools_schema
-4. Call call_subagent with:
+2. Select the appropriate agent_id from [Available Sub-Agents] above
+3. Call call_subagent with:
    - agent_id         : selected agent ID
    - task_description : current task text as-is (NOT the full conversation)
    - input_data       : include only if required
 ```
+
+> ⚠️ Do NOT call `find_available_subagents` — the list is already provided above.
 
 ---
 

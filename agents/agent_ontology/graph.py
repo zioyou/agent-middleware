@@ -360,12 +360,30 @@ async def worker_node(state: State, config: RunnableConfig) -> dict:
     last_turn_result = state.get("last_turn_result") or "(None)"
     session_context_str = _format_session_context(state.get("session_context") or [])
 
+    # Store에서 서브에이전트 목록 조회 → 프롬프트에 주입 (find_available_subagents 호출 불필요)
+    available_subagents_str = "(현재 연결된 서브에이전트 없음)"
+    try:
+        from src.agent_server.core.database import db_manager
+        store = await db_manager.get_store()
+        if store:
+            items = await store.asearch(("subagents",))
+            if items:
+                lines = []
+                for item in items:
+                    v = item.value
+                    desc = (v.get("description") or "")[:120]
+                    lines.append(f"- agent_id: `{v.get('agent_id')}` | {v.get('name')} — {desc}")
+                available_subagents_str = "\n".join(lines)
+    except Exception as _e:
+        logger.warning(f"[worker] subagent 목록 조회 실패 (무시): {_e}")
+
     system_content = WORKER_PROMPT_TEMPLATE.format(
         task_description=current_task["content"],
         original_user_message=original_user_message,
         last_turn_result=last_turn_result,
         session_context=session_context_str,
         previous_results=previous_results_str,
+        available_subagents=available_subagents_str,
     )
     
     kst_now = datetime.now() + timedelta(hours=9)

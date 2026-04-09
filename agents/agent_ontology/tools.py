@@ -171,6 +171,29 @@ async def call_subagent(
     """
     if input_data is None:
         input_data = {}
+
+    # ── AGENT_ID 선검증: interrupt 전에 유효성 확인 ───────────────────────────
+    # agent_id가 Store에 없으면 interrupt 없이 즉시 에러 + 사용 가능 목록 반환
+    try:
+        store = await db_manager.get_store()
+        if store:
+            items = await store.asearch(("subagents",))
+            valid_ids = {item.value.get("agent_id") for item in items}
+            if valid_ids and agent_id not in valid_ids:
+                available = [
+                    {"agent_id": item.value.get("agent_id"), "name": item.value.get("name")}
+                    for item in items
+                ]
+                print(f"[call_subagent] agent_id '{agent_id}' not found. valid={valid_ids}")
+                return {
+                    "error": f"agent_id '{agent_id}'를 찾을 수 없습니다.",
+                    "available_subagents": available,
+                    "hint": "위 목록의 agent_id 중 하나를 사용하여 다시 호출하세요.",
+                }
+    except Exception as _e:
+        print(f"[call_subagent] agent_id 검증 실패 (무시하고 진행): {_e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     # ── HUMAN-IN-THE-LOOP: 실행 전 사용자 승인 요청 ──────────────────────────
     # interrupt()는 LangGraph 체크포인트에 현재 상태를 저장하고 실행을 멈춥니다.
     # 사용자가 Command(resume={...})하면 이 함수가 다시 처음부터 실행되며,
