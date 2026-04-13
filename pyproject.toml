@@ -53,7 +53,7 @@ dependencies = [
     "python-docx>=1.1.0",
     "olefile>=0.47",
     "networkx>=3.4.2",
-    "deepagents",  # No version constraint - use latest available
+    "deepagents>=0.5.2",
     "redis>=5.2.1",
     "langchain-community",
     "python-multipart>=0.0.9",
