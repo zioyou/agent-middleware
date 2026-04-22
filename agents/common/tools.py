@@ -515,9 +515,30 @@ async def send_mail_with_approval(
 
 
 
-def _inject_credentials(task: str) -> str:
-    """task에 URL이 있으면 환경변수에 등록된 계정 정보를 자동으로 앞에 주입."""
-    _SITE_CREDENTIALS = [
+def _inject_credentials(task: str, state: dict | None = None) -> str:
+    """task에 URL이 있으면 계정 정보를 자동으로 앞에 주입.
+
+    우선순위:
+    1. user_secrets.site_credentials (UI에서 설정한 사용자별 자격증명)
+    2. 환경변수 (서버 공용 자격증명)
+    """
+    # 1. user_secrets.site_credentials 체크
+    if state:
+        secrets = _get_user_secrets(state)
+        site_credentials: list[dict] = secrets.get("site_credentials") or []
+        for cred in site_credentials:
+            domain = cred.get("domain", "")
+            if domain and domain in task:
+                user_id = cred.get("id", "")
+                password = cred.get("password", "")
+                if user_id and password:
+                    cred_hint = f"[Login credentials] ID: {user_id} / Password: {password}\n"
+                    if cred_hint not in task:
+                        task = cred_hint + task
+                return task
+
+    # 2. 환경변수 폴백 (서버 공용)
+    _ENV_CREDENTIALS = [
         {
             "domains": ["dev.zioyou.com"],
             "id_env": "DEMO_DEV_ID",
@@ -529,7 +550,7 @@ def _inject_credentials(task: str) -> str:
             "pw_env": "DEMO_WIKI_PW",
         },
     ]
-    for site in _SITE_CREDENTIALS:
+    for site in _ENV_CREDENTIALS:
         if any(domain in task for domain in site["domains"]):
             user_id = os.getenv(site["id_env"], "")
             password = os.getenv(site["pw_env"], "")
@@ -541,7 +562,11 @@ def _inject_credentials(task: str) -> str:
     return task
 
 
-async def run_browser_task(task: str, config: RunnableConfig) -> dict[str, Any]:
+async def run_browser_task(
+    task: str,
+    config: RunnableConfig,
+    state: Annotated[dict, InjectedState],
+) -> dict[str, Any]:
     """웹 브라우저를 AI가 직접 제어하여 작업을 수행합니다.
 
     로그인, 폼 작성, 버튼 클릭, 데이터 입력 등 실제 브라우저 조작이 필요한 작업에 사용하세요.
@@ -558,7 +583,7 @@ async def run_browser_task(task: str, config: RunnableConfig) -> dict[str, Any]:
     """
     from agent_server.browser_manager import browser_manager
 
-    task = _inject_credentials(task)
+    task = _inject_credentials(task, state)
     thread_id: str = (config.get("configurable") or {}).get("thread_id") or "default"
 
     try:
@@ -576,7 +601,18 @@ async def run_browser_task(task: str, config: RunnableConfig) -> dict[str, Any]:
                 timeout=300.0,
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+            # 결과 포맷: 에이전트가 활용할 수 있도록 구조화
+            result: dict[str, Any] = {"status": data.get("status"), "result": data.get("result")}
+            if data.get("url"):
+                result["current_url"] = data["url"]
+            if data.get("page_text"):
+                result["page_content"] = data["page_text"]
+            if data.get("screenshot_path"):
+                result["screenshot_url"] = f"{session.api_url}{data['screenshot_path']}"
+
+            return result
     except asyncio.CancelledError:
         try:
             async with httpx.AsyncClient() as client:

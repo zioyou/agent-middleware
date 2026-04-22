@@ -61,6 +61,7 @@ dependencies = [
     "markdown2>=2.5.5",
     "docker>=7.0.0",  # Browser Manager: 동적 컨테이너 생성/삭제
     # "langchain-mcp-adapters>=0.2.2",  # MCP 비활성화 중 — 활성화 시 주석 해제
+    "kubernetes>=35.0.0",
 ]
 
 [dependency-groups]

@@ -561,9 +561,10 @@ class StreamingService(TracedService):
         주로 관리자 또는 긴급 중단이 필요한 경우 사용됩니다.
 
         동작 흐름:
-        1. 에러 시그널 전송 ("Run was interrupted")
-        2. 실행 상태를 "interrupted"로 업데이트
-        3. 성공 여부 반환
+        1. 백그라운드 asyncio Task 취소 (LM Studio 등 외부 LLM 요청 중단)
+        2. 에러 시그널 전송 ("Run was interrupted")
+        3. 실행 상태를 "interrupted"로 업데이트
+        4. 성공 여부 반환
 
         Args:
             run_id (str): 실행 고유 식별자
@@ -576,6 +577,8 @@ class StreamingService(TracedService):
             - LangGraph의 interrupt()와는 다른 개념 (이건 강제 중단)
         """
         try:
+            # 백그라운드 Task를 먼저 취소하여 graph.astream() 중단
+            self._cancel_background_task(run_id)
             await self.signal_run_error(run_id, "Run was interrupted")
             await self._update_run_status(run_id, "interrupted")
             return True
@@ -590,9 +593,10 @@ class StreamingService(TracedService):
         클라이언트가 명시적으로 취소를 요청한 경우 호출됩니다.
 
         동작 흐름:
-        1. 취소 시그널 전송 (브로커에 "end" 이벤트)
-        2. 실행 상태를 "cancelled"로 업데이트
-        3. 성공 여부 반환
+        1. 백그라운드 asyncio Task 취소 (LM Studio 등 외부 LLM 요청 중단)
+        2. 취소 시그널 전송 (브로커에 "end" 이벤트)
+        3. 실행 상태를 "cancelled"로 업데이트
+        4. 성공 여부 반환
 
         Args:
             run_id (str): 실행 고유 식별자
@@ -601,10 +605,15 @@ class StreamingService(TracedService):
             bool: 취소 성공 시 True, 실패 시 False
 
         참고:
+            - _cancel_background_task()가 graph.astream() 루프를 중단시켜
+              LM Studio 등 외부 LLM의 HTTP 연결도 함께 종료됨
             - signal_run_cancelled()가 브로커 정리 수행
             - 이미 완료된 실행도 취소 가능 (상태만 업데이트)
         """
         try:
+            # 백그라운드 Task를 먼저 취소하여 graph.astream() 중단
+            # → LM Studio 등 외부 LLM에 열린 HTTP 연결도 함께 종료됨
+            self._cancel_background_task(run_id)
             await self.signal_run_cancelled(run_id)
             await self._update_run_status(run_id, "cancelled")
             return True

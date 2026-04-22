@@ -274,13 +274,26 @@ async def planner_node(state: State, config: RunnableConfig) -> dict:
         # Replace tool calls in the response
         response.tool_calls = safe_tool_calls
 
+    # --- FALLBACK GUARDRAIL ---
+    # tool_choice="required"에도 tool_calls 없는 응답을 반환하는 경우
+    # 무한 루프(planner → planner → ...) 방지를 위해 강제로 write_todos를 생성합니다.
+    if not response.tool_calls:
+        import uuid
+        user_msg = _extract_user_message(messages)
+        logger.warning(f"[planner] no tool_calls in response (model ignored tool_choice=required). forcing write_todos.")
+        response = response.model_copy(update={
+            "tool_calls": [{
+                "name": "write_todos",
+                "args": {"todos": [{"content": user_msg, "status": "in_progress"}]},
+                "id": str(uuid.uuid4()),
+                "type": "tool_call",
+            }]
+        })
+
     logger.debug(f"[planner] tool_calls={response.tool_calls}")
-    
+
     return_update["messages"] = [response]
-    
-    # If the model didn't call write_todos (e.g. simple chat), that's fine.
-    # The dispatcher will handle it (no todos -> end).
-    
+
     return return_update
 
 async def dispatcher_node(state: State, config: RunnableConfig) -> dict:

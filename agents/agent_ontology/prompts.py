@@ -90,6 +90,15 @@ https://A.com 접속 및 로그인 후 아래 순서대로 실행:
 
 **UI 텍스트(버튼명, 메뉴명)는 사용자가 말한 그대로 사용하세요.** 절대 바꾸거나 요약하지 마세요.
 
+**폼 입력이 포함된 작업은 모든 필드의 값을 task에 명시하세요.** 제목, 내용, 본문 등 텍스트를 입력해야 하는 필드가 있는데 사용자가 구체적인 내용을 지정하지 않은 경우, Planner가 요청 의도에 맞는 적절한 내용을 직접 생성하여 task에 포함시켜야 합니다. "알아서 써줘", "인사글 작성" 같은 추상적 지시를 browser agent에게 그대로 넘기면 안 됩니다. browser agent는 반드시 구체적인 텍스트를 받아야 합니다.
+
+예시: 사용자가 "카페에 인사글 써줘"라고 하면:
+```
+3단계: 제목 필드에 '안녕하세요! 처음 인사드립니다 :)' 입력
+4단계: 내용 필드에 '안녕하세요, 반갑습니다! 새로 가입하게 된 회원입니다. 앞으로 잘 부탁드립니다. 좋은 하루 보내세요!' 입력
+```
+이처럼 Planner가 자연스럽고 구체적인 텍스트를 직접 만들어 task에 포함시키세요.
+
 ### Search type classification (determines which tool the Worker will use)
 
 **General web search** → include "웹 검색" in the task
@@ -229,7 +238,7 @@ The following sub-agents are currently connected. Use these agent_ids directly w
 | Results should be visualized as a **bar/line/scatter/pie chart** | `create_graph` |
 | Results should be visualized as a **network/relationship diagram** | `create_network_graph` |
 | Results should be visualized as a **hierarchy/tree/org chart** | `create_tree_chart` |
-| Task involves **browser control** / login / form fill / web click | `run_browser_task` — **task 파라미터 필수 규칙: (1) 첫 문장에 반드시 접속 URL을 포함하세요. (2) 로그인이 필요한 사이트라면 위 [사전 등록된 로그인 계정] 표에서 해당 사이트의 ID와 비밀번호를 찾아 task 안에 직접 명시하세요. 계정 정보를 task에 넣지 않으면 browser-use가 알 수 없습니다. (3) 모든 입력값(제목, 내용, 옵션 등)을 명시하세요. (4) 메뉴·버튼 이름은 한국어 원문 그대로 사용하세요. (5) task 전체 문장을 반드시 한국어로만 작성하세요. 영어 문장 절대 금지.** |
+| Task involves **browser control** / login / form fill / web click | `run_browser_task` — **⚠️ 하나의 연속된 브라우저 플로우(로그인 → 이동 → 입력 → 저장)는 반드시 단 한 번의 호출로 처리하세요. 같은 사이트에서 이어지는 동작을 여러 번 나눠 호출하면 매 호출마다 세션이 초기화되어 로그인 상태가 사라집니다. 단, 서로 다른 사이트의 독립적인 브라우저 작업은 각각 별도로 호출하세요. task 파라미터 필수 규칙: (1) 첫 문장에 반드시 접속 URL을 포함하세요. (2) 로그인이 필요한 사이트라면 위 [사전 등록된 로그인 계정] 표에서 해당 사이트의 ID와 비밀번호를 찾아 task 안에 직접 명시하세요. 계정 정보를 task에 넣지 않으면 browser-use가 알 수 없습니다. (3) 모든 입력값(제목, 내용, 옵션 등)을 명시하세요. (4) 메뉴·버튼 이름은 한국어 원문 그대로 사용하세요. (5) task 전체 문장을 반드시 한국어로만 작성하세요. 영어 문장 절대 금지.** |
 
 ---
 
