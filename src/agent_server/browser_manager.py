@@ -30,7 +30,15 @@ class BrowserSession:
 
     @property
     def vnc_url(self) -> str:
-        return f"http://session-{self.safe_id}.localhost:{TRAEFIK_VNC_PORT}/vnc.html"
+        runtime = os.getenv("BROWSER_MANAGER_RUNTIME", "docker").lower()
+        if runtime in ("kubernetes", "k8s"):
+            # K8s: 단일 도메인 path 기반 라우팅
+            # BROWSER_VNC_BASE_URL 예: https://agent.zio.run:7002
+            base = os.getenv("BROWSER_VNC_BASE_URL", "")
+            return f"{base}/browser/{self.safe_id}/vnc.html?path=browser/{self.safe_id}/websockify"
+        else:
+            # Docker(로컬 개발): 세션별 서브도메인 방식
+            return f"http://session-{self.safe_id}.localhost:{TRAEFIK_VNC_PORT}/vnc.html"
 
     @property
     def api_url(self) -> str:

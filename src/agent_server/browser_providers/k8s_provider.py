@@ -5,7 +5,8 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 BROWSER_IMAGE = os.getenv("BROWSER_IMAGE", "agent-browser:latest")
-K8S_NAMESPACE = os.getenv("K8S_NAMESPACE", "agent-system")
+K8S_NAMESPACE = os.getenv("K8S_NAMESPACE", "agent-chat")
+BROWSER_INGRESS_HOST = os.getenv("BROWSER_INGRESS_HOST", "agent.zio.run")
 
 class KubernetesProvider(BrowserProviderBase):
     def __init__(self):
@@ -85,17 +86,21 @@ class KubernetesProvider(BrowserProviderBase):
         )
         
         ingress_route = {
-            "apiVersion": "traefik.containo.us/v1alpha1",
+            "apiVersion": "traefik.io/v1alpha1",
             "kind": "IngressRoute",
             "metadata": {
                 "name": pod_name,
                 "namespace": K8S_NAMESPACE
             },
             "spec": {
-                "entryPoints": ["web"],
+                "entryPoints": ["web", "websecure"],
                 "routes": [{
-                    "match": f"Host(`session-{safe_id}.localhost`)",
+                    "match": f"Host(`{BROWSER_INGRESS_HOST}`) && PathPrefix(`/browser/{safe_id}`)",
                     "kind": "Rule",
+                    "middlewares": [
+                        {"name": "browser-strip-prefix", "namespace": K8S_NAMESPACE},
+                        {"name": "crowdsec-traefik-bouncer", "namespace": "crowdsec"}
+                    ],
                     "services": [{
                         "name": pod_name,
                         "port": 6080
@@ -108,7 +113,7 @@ class KubernetesProvider(BrowserProviderBase):
             await self._k8s(lambda: self.core_v1.create_namespaced_pod(namespace=K8S_NAMESPACE, body=pod))
             await self._k8s(lambda: self.core_v1.create_namespaced_service(namespace=K8S_NAMESPACE, body=service))
             await self._k8s(lambda: self.custom_api.create_namespaced_custom_object(
-                group="traefik.containo.us",
+                group="traefik.io",
                 version="v1alpha1",
                 namespace=K8S_NAMESPACE,
                 plural="ingressroutes",
@@ -139,7 +144,7 @@ class KubernetesProvider(BrowserProviderBase):
 
         try:
             await self._k8s(lambda: self.custom_api.delete_namespaced_custom_object(
-                group="traefik.containo.us",
+                group="traefik.io",
                 version="v1alpha1",
                 namespace=K8S_NAMESPACE,
                 plural="ingressroutes",
